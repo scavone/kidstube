@@ -8,7 +8,10 @@ import asyncio
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv()
 
 from config import load_config
 from data.video_store import VideoStore
@@ -65,6 +68,7 @@ def create_app(cfg=None) -> FastAPI:
     app.state.api_key = cfg.api_key
 
     app.include_router(api_routes.router)
+    app.include_router(api_routes.public_router)
 
     return app
 

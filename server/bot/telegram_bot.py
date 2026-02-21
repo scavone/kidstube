@@ -16,6 +16,8 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
+    MessageHandler,
+    filters,
     ContextTypes,
 )
 from telegram.constants import ParseMode
@@ -90,6 +92,8 @@ class TelegramBot:
             CommandHandler(["start", "help"], self._cmd_help),
             CommandHandler("kids", self._cmd_kids),
             CommandHandler("addkid", self._cmd_addkid),
+            CommandHandler("editkid", self._cmd_editkid),
+            CommandHandler("removekid", self._cmd_removekid),
             CommandHandler("pending", self._cmd_pending),
             CommandHandler("approved", self._cmd_approved),
             CommandHandler("stats", self._cmd_stats),
@@ -97,6 +101,7 @@ class TelegramBot:
             CommandHandler("time", self._cmd_time),
             CommandHandler("watch", self._cmd_watch),
             CommandHandler("search", self._cmd_search),
+            MessageHandler(filters.PHOTO & ~filters.COMMAND, self._handle_photo),
             CallbackQueryHandler(self._handle_callback),
         ]
         for h in handlers:
@@ -344,7 +349,9 @@ class TelegramBot:
         text = (
             f"<b>{_esc(app_name)} Bot Commands</b>\n\n"
             "/kids — List child profiles\n"
-            "/addkid Name Avatar — Add a child profile\n"
+            "/addkid Name [Avatar] — Add a child profile\n"
+            "/editkid Name [NewName] [NewAvatar] — Edit name/avatar\n"
+            "/removekid Name — Remove a child profile\n"
             "/pending — View pending video requests\n"
             "/approved [ChildName] — Approved videos\n"
             "/stats [ChildName] — Video statistics\n"
@@ -353,7 +360,8 @@ class TelegramBot:
             "/watch [ChildName] — Watch activity today\n"
             "/search — Manage word filters\n"
             "/help — Show this message\n\n"
-            "<i>Child name can be omitted if only one child exists.</i>"
+            "<i>Child name can be omitted if only one child exists.</i>\n"
+            "<i>Send a photo with caption \"avatar ChildName\" to set a photo avatar.</i>"
         )
         await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -431,6 +439,134 @@ class TelegramBot:
             f"Daily limit: {default_limit} minutes",
             parse_mode=ParseMode.HTML,
         )
+
+    async def _cmd_editkid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        if not args:
+            await update.effective_message.reply_text(
+                "Usage:\n"
+                "/editkid CurrentName NewName [NewAvatar]\n"
+                "/editkid CurrentName avatar NewAvatar\n\n"
+                "Or send a photo with caption: avatar ChildName"
+            )
+            return
+
+        current_name = args[0]
+        child = self.video_store.get_child_by_name(current_name)
+        if not child:
+            await update.effective_message.reply_text(f"Child '{current_name}' not found.")
+            return
+
+        if len(args) == 1:
+            await update.effective_message.reply_text(
+                "Usage:\n"
+                "/editkid CurrentName NewName [NewAvatar]\n"
+                "/editkid CurrentName avatar NewAvatar"
+            )
+            return
+
+        # /editkid Name avatar 👧
+        if args[1].lower() == "avatar" and len(args) >= 3:
+            new_avatar = args[2]
+            updated = self.video_store.update_child(child["id"], avatar=new_avatar)
+            if updated:
+                await update.effective_message.reply_text(
+                    f"Avatar for <b>{_esc(updated['name'])}</b> updated to {_esc(new_avatar)}",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await update.effective_message.reply_text("Failed to update avatar.")
+            return
+
+        # /editkid CurrentName NewName [NewAvatar]
+        new_name = args[1]
+        new_avatar = args[2] if len(args) > 2 else None
+        updated = self.video_store.update_child(child["id"], name=new_name, avatar=new_avatar)
+        if not updated:
+            await update.effective_message.reply_text(
+                f"Failed to update. A child named '{new_name}' may already exist."
+            )
+            return
+
+        parts = [f"<b>{_esc(child['name'])}</b> renamed to <b>{_esc(updated['name'])}</b>"]
+        if new_avatar:
+            parts.append(f"Avatar: {_esc(new_avatar)}")
+        await update.effective_message.reply_text(
+            "\n".join(parts), parse_mode=ParseMode.HTML
+        )
+
+    async def _cmd_removekid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        if not args:
+            await update.effective_message.reply_text(
+                "Usage: /removekid ChildName\n"
+                "This permanently deletes the child and all their data."
+            )
+            return
+
+        name = args[0]
+        child = self.video_store.get_child_by_name(name)
+        if not child:
+            await update.effective_message.reply_text(f"Child '{name}' not found.")
+            return
+
+        child_id = child["id"]
+        child_name = child["name"]
+        avatar = child.get("avatar", "")
+
+        # Delete avatar file if exists
+        self.video_store.delete_avatar(child_id)
+        # Delete child (cascades settings, access, watch_log)
+        self.video_store.remove_child(child_id)
+
+        await update.effective_message.reply_text(
+            f"{avatar} <b>{_esc(child_name)}</b> has been removed.\n"
+            "All watch history, settings, and video access data deleted.",
+            parse_mode=ParseMode.HTML,
+        )
+
+    async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle photo messages — used for setting photo avatars.
+
+        Caption format: avatar ChildName
+        """
+        if not self._is_admin(update):
+            return
+
+        caption = (update.effective_message.caption or "").strip()
+        if not caption.lower().startswith("avatar "):
+            return  # Not an avatar upload, ignore
+
+        child_name = caption[7:].strip()
+        if not child_name:
+            await update.effective_message.reply_text(
+                "Send a photo with caption: avatar ChildName"
+            )
+            return
+
+        child = self.video_store.get_child_by_name(child_name)
+        if not child:
+            await update.effective_message.reply_text(f"Child '{child_name}' not found.")
+            return
+
+        # Download the largest available photo
+        photo = update.effective_message.photo[-1]  # Highest resolution
+        file = await context.bot.get_file(photo.file_id)
+        photo_bytes = await file.download_as_bytearray()
+
+        if self.video_store.save_avatar(child["id"], bytes(photo_bytes)):
+            await update.effective_message.reply_text(
+                f"Photo avatar set for <b>{_esc(child['name'])}</b>!",
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await update.effective_message.reply_text("Failed to save avatar photo.")
 
     async def _cmd_pending(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_admin(update):

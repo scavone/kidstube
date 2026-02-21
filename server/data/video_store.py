@@ -161,6 +161,33 @@ class VideoStore:
             ).fetchone()
             return dict(row) if row else None
 
+    def update_child(self, child_id: int, name: Optional[str] = None,
+                     avatar: Optional[str] = None) -> Optional[dict]:
+        """Update a child's name and/or avatar. Returns updated child or None."""
+        with self._lock:
+            child = self.conn.execute(
+                "SELECT * FROM children WHERE id = ?", (child_id,)
+            ).fetchone()
+            if not child:
+                return None
+
+            new_name = name if name is not None else child["name"]
+            new_avatar = avatar if avatar is not None else child["avatar"]
+
+            try:
+                self.conn.execute(
+                    "UPDATE children SET name = ?, avatar = ? WHERE id = ?",
+                    (new_name, new_avatar, child_id),
+                )
+                self.conn.commit()
+            except sqlite3.IntegrityError:
+                return None  # Name conflict
+
+            row = self.conn.execute(
+                "SELECT * FROM children WHERE id = ?", (child_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
     def remove_child(self, child_id: int) -> bool:
         """Delete a child profile and all related data (CASCADE)."""
         with self._lock:
@@ -169,6 +196,40 @@ class VideoStore:
             )
             self.conn.commit()
             return cursor.rowcount > 0
+
+    def get_avatar_dir(self) -> Path:
+        """Return the avatar storage directory, creating it if needed."""
+        db_dir = Path(self.conn.execute("PRAGMA database_list").fetchone()[2]).parent
+        avatar_dir = db_dir / "avatars"
+        avatar_dir.mkdir(parents=True, exist_ok=True)
+        return avatar_dir
+
+    def save_avatar(self, child_id: int, photo_bytes: bytes) -> bool:
+        """Save avatar photo to disk. Returns True on success."""
+        child = self.get_child(child_id)
+        if not child:
+            return False
+        avatar_path = self.get_avatar_dir() / f"{child_id}.jpg"
+        avatar_path.write_bytes(photo_bytes)
+        # Mark avatar field as "photo" to indicate file-based avatar
+        with self._lock:
+            self.conn.execute(
+                "UPDATE children SET avatar = ? WHERE id = ?",
+                ("photo", child_id),
+            )
+            self.conn.commit()
+        return True
+
+    def get_avatar_path(self, child_id: int) -> Optional[Path]:
+        """Return the path to a child's avatar photo, or None if not found."""
+        avatar_path = self.get_avatar_dir() / f"{child_id}.jpg"
+        return avatar_path if avatar_path.exists() else None
+
+    def delete_avatar(self, child_id: int) -> None:
+        """Remove a child's avatar photo from disk."""
+        avatar_path = self.get_avatar_dir() / f"{child_id}.jpg"
+        if avatar_path.exists():
+            avatar_path.unlink()
 
     # ── Child Settings ──────────────────────────────────────────────
 

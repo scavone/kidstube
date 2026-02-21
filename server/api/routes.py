@@ -8,13 +8,15 @@ import logging
 import re
 import time
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 
 from api.auth import verify_api_key
 from api.models import (
     VideoRequestBody,
     HeartbeatBody,
     CreateChildBody,
+    UpdateChildBody,
     HeartbeatResponse,
     VideoStatusResponse,
     StreamUrlResponse,
@@ -26,6 +28,7 @@ from utils import get_today_str, get_day_utc_bounds, is_within_schedule, format_
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_api_key)])
+public_router = APIRouter(prefix="/api")
 
 VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 
@@ -68,6 +71,51 @@ async def create_profile(body: CreateChildBody):
     default_limit = config.watch_limits.daily_limit_minutes
     video_store.set_child_setting(child["id"], "daily_limit_minutes", str(default_limit))
     return child
+
+
+@router.put("/profiles/{child_id}")
+async def update_profile(child_id: int, body: UpdateChildBody):
+    if body.name is None and body.avatar is None:
+        raise HTTPException(status_code=400, detail="Provide at least one field to update")
+    child = video_store.update_child(child_id, name=body.name, avatar=body.avatar)
+    if not child:
+        existing = video_store.get_child(child_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Child not found")
+        raise HTTPException(status_code=409, detail="A child with that name already exists")
+    return child
+
+
+@router.delete("/profiles/{child_id}")
+async def delete_profile(child_id: int):
+    video_store.delete_avatar(child_id)
+    if not video_store.remove_child(child_id):
+        raise HTTPException(status_code=404, detail="Child not found")
+    return {"status": "deleted", "child_id": child_id}
+
+
+@router.post("/profiles/{child_id}/avatar")
+async def upload_avatar(child_id: int, file: UploadFile = File(...)):
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:  # 5 MB limit
+        raise HTTPException(status_code=400, detail="File too large (max 5 MB)")
+
+    if not video_store.save_avatar(child_id, contents):
+        raise HTTPException(status_code=500, detail="Failed to save avatar")
+
+    return {"status": "uploaded", "child_id": child_id}
+
+
+@public_router.get("/profiles/{child_id}/avatar")
+async def get_avatar(child_id: int):
+    path = video_store.get_avatar_path(child_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="No avatar photo found")
+    return FileResponse(path, media_type="image/jpeg")
 
 
 # ── Search ──────────────────────────────────────────────────────────

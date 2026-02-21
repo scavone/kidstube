@@ -54,6 +54,21 @@ struct ChildProfileTests {
         let profile = ChildProfile(id: 42, name: "Test", avatar: "🎮", createdAt: "2025-01-01")
         #expect(profile.id == 42)
     }
+
+    @Test("Emoji avatar — hasPhotoAvatar is false")
+    func emojiAvatarNotPhoto() {
+        let profile = ChildProfile(id: 1, name: "Alex", avatar: "👦", createdAt: "2025-01-01")
+        #expect(!profile.hasPhotoAvatar)
+        #expect(profile.avatarURL == nil)
+    }
+
+    @Test("Photo avatar — hasPhotoAvatar is true")
+    func photoAvatarDetected() {
+        let profile = ChildProfile(id: 3, name: "Sam", avatar: "photo", createdAt: "2025-01-01")
+        #expect(profile.hasPhotoAvatar)
+        #expect(profile.avatarURL != nil)
+        #expect(profile.avatarURL!.absoluteString.contains("/api/profiles/3/avatar"))
+    }
 }
 
 // MARK: - Video Model Tests

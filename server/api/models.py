@@ -22,6 +22,11 @@ class CreateChildBody(BaseModel):
     avatar: str = Field(default="👦", max_length=10)
 
 
+class UpdateChildBody(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    avatar: Optional[str] = Field(default=None, max_length=10)
+
+
 # ── Responses ───────────────────────────────────────────────────────
 
 class ChildProfileResponse(BaseModel):

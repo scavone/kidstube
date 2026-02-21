@@ -290,6 +290,189 @@ class TestAddKidCommand:
         assert limit == str(cfg.watch_limits.daily_limit_minutes)
 
 
+# ── /editkid Command ─────────────────────────────────────────────
+
+class TestEditKidCommand:
+    @pytest.mark.asyncio
+    async def test_editkid_no_args(self, bot, admin_update, context):
+        context.args = []
+        await bot._cmd_editkid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Usage:" in msg
+
+    @pytest.mark.asyncio
+    async def test_editkid_rename(self, bot, admin_update, context, store):
+        store.add_child("Alex")
+        context.args = ["Alex", "Alexander"]
+        await bot._cmd_editkid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Alexander" in msg
+        assert store.get_child_by_name("Alexander") is not None
+
+    @pytest.mark.asyncio
+    async def test_editkid_rename_with_avatar(self, bot, admin_update, context, store):
+        store.add_child("Alex", "👦")
+        context.args = ["Alex", "Sam", "👧"]
+        await bot._cmd_editkid(admin_update, context)
+        child = store.get_child_by_name("Sam")
+        assert child is not None
+        assert child["avatar"] == "👧"
+
+    @pytest.mark.asyncio
+    async def test_editkid_avatar_only(self, bot, admin_update, context, store):
+        store.add_child("Alex", "👦")
+        context.args = ["Alex", "avatar", "👧"]
+        await bot._cmd_editkid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "👧" in msg
+        child = store.get_child_by_name("Alex")
+        assert child["avatar"] == "👧"
+
+    @pytest.mark.asyncio
+    async def test_editkid_not_found(self, bot, admin_update, context):
+        context.args = ["Ghost", "NewName"]
+        await bot._cmd_editkid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "not found" in msg
+
+    @pytest.mark.asyncio
+    async def test_editkid_name_conflict(self, bot, admin_update, context, store):
+        store.add_child("Alex")
+        store.add_child("Sam")
+        context.args = ["Sam", "Alex"]
+        await bot._cmd_editkid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Failed" in msg or "already exist" in msg
+
+    @pytest.mark.asyncio
+    async def test_editkid_one_arg_shows_usage(self, bot, admin_update, context, store):
+        store.add_child("Alex")
+        context.args = ["Alex"]
+        await bot._cmd_editkid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Usage:" in msg
+
+
+# ── /removekid Command ───────────────────────────────────────────
+
+class TestRemoveKidCommand:
+    @pytest.mark.asyncio
+    async def test_removekid_no_args(self, bot, admin_update, context):
+        context.args = []
+        await bot._cmd_removekid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Usage:" in msg
+
+    @pytest.mark.asyncio
+    async def test_removekid_success(self, bot, admin_update, context, store):
+        child = store.add_child("Alex", "👦")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        context.args = ["Alex"]
+        await bot._cmd_removekid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Alex" in msg
+        assert "removed" in msg
+        assert store.get_child_by_name("Alex") is None
+
+    @pytest.mark.asyncio
+    async def test_removekid_not_found(self, bot, admin_update, context):
+        context.args = ["Ghost"]
+        await bot._cmd_removekid(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "not found" in msg
+
+    @pytest.mark.asyncio
+    async def test_removekid_non_admin(self, bot, non_admin_update, context, store):
+        store.add_child("Alex")
+        context.args = ["Alex"]
+        await bot._cmd_removekid(non_admin_update, context)
+        non_admin_update.effective_message.reply_text.assert_called_once_with("Unauthorized.")
+        assert store.get_child_by_name("Alex") is not None
+
+
+# ── Photo Avatar Handler ─────────────────────────────────────────
+
+class TestPhotoHandler:
+    @pytest.mark.asyncio
+    async def test_photo_avatar_upload(self, bot, store):
+        """Test setting a photo avatar via message with photo."""
+        child = store.add_child("Alex")
+
+        update = MagicMock()
+        update.effective_chat.id = 12345
+        update.effective_user.id = 12345
+        update.effective_message = MagicMock()
+        update.effective_message.caption = "avatar Alex"
+        update.effective_message.reply_text = AsyncMock()
+
+        # Mock photo object
+        mock_photo = MagicMock()
+        mock_photo.file_id = "fake_file_id"
+        update.effective_message.photo = [mock_photo]  # List of sizes, last is largest
+
+        context = MagicMock()
+        mock_file = AsyncMock()
+        mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"\x89PNG fake"))
+        context.bot = AsyncMock()
+        context.bot.get_file = AsyncMock(return_value=mock_file)
+
+        await bot._handle_photo(update, context)
+
+        update.effective_message.reply_text.assert_called_once()
+        msg = update.effective_message.reply_text.call_args[0][0]
+        assert "Photo avatar set" in msg
+        assert store.get_avatar_path(child["id"]) is not None
+
+    @pytest.mark.asyncio
+    async def test_photo_no_caption_ignored(self, bot, store):
+        """Photo without 'avatar' caption is silently ignored."""
+        store.add_child("Alex")
+
+        update = MagicMock()
+        update.effective_chat.id = 12345
+        update.effective_user.id = 12345
+        update.effective_message = MagicMock()
+        update.effective_message.caption = "Just a random photo"
+        update.effective_message.reply_text = AsyncMock()
+        update.effective_message.photo = [MagicMock()]
+
+        context = MagicMock()
+
+        await bot._handle_photo(update, context)
+        update.effective_message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_photo_child_not_found(self, bot, store):
+        update = MagicMock()
+        update.effective_chat.id = 12345
+        update.effective_user.id = 12345
+        update.effective_message = MagicMock()
+        update.effective_message.caption = "avatar Ghost"
+        update.effective_message.reply_text = AsyncMock()
+        update.effective_message.photo = [MagicMock()]
+
+        context = MagicMock()
+
+        await bot._handle_photo(update, context)
+        msg = update.effective_message.reply_text.call_args[0][0]
+        assert "not found" in msg
+
+    @pytest.mark.asyncio
+    async def test_photo_non_admin_ignored(self, bot, store):
+        store.add_child("Alex")
+        update = MagicMock()
+        update.effective_chat.id = 99999
+        update.effective_user.id = 99999
+        update.effective_message = MagicMock()
+        update.effective_message.caption = "avatar Alex"
+        update.effective_message.reply_text = AsyncMock()
+        update.effective_message.photo = [MagicMock()]
+
+        context = MagicMock()
+        await bot._handle_photo(update, context)
+        update.effective_message.reply_text.assert_not_called()
+
+
 # ── /stats Command ────────────────────────────────────────────────
 
 class TestStatsCommand:

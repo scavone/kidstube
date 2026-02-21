@@ -69,6 +69,83 @@ class TestChildProfiles:
         store.remove_child(child["id"])
         assert store.get_child_setting(child["id"], "daily_limit_minutes") == ""
 
+    def test_update_child_name(self, store):
+        child = store.add_child("Alex")
+        updated = store.update_child(child["id"], name="Alexander")
+        assert updated is not None
+        assert updated["name"] == "Alexander"
+        assert updated["avatar"] == child["avatar"]
+
+    def test_update_child_avatar(self, store):
+        child = store.add_child("Alex", "👦")
+        updated = store.update_child(child["id"], avatar="👧")
+        assert updated is not None
+        assert updated["avatar"] == "👧"
+        assert updated["name"] == "Alex"
+
+    def test_update_child_both(self, store):
+        child = store.add_child("Alex", "👦")
+        updated = store.update_child(child["id"], name="Sam", avatar="👧")
+        assert updated is not None
+        assert updated["name"] == "Sam"
+        assert updated["avatar"] == "👧"
+
+    def test_update_child_not_found(self, store):
+        result = store.update_child(999, name="Ghost")
+        assert result is None
+
+    def test_update_child_name_conflict(self, store):
+        store.add_child("Alex")
+        child2 = store.add_child("Sam")
+        result = store.update_child(child2["id"], name="Alex")
+        assert result is None  # Conflict with existing name
+
+    def test_update_child_no_change(self, store):
+        child = store.add_child("Alex", "👦")
+        updated = store.update_child(child["id"])
+        assert updated is not None
+        assert updated["name"] == "Alex"
+        assert updated["avatar"] == "👦"
+
+
+class TestAvatarStorage:
+    def test_save_and_get_avatar(self, store):
+        child = store.add_child("Alex")
+        photo_data = b"\x89PNG\r\n\x1a\n fake image data"
+        assert store.save_avatar(child["id"], photo_data)
+
+        path = store.get_avatar_path(child["id"])
+        assert path is not None
+        assert path.read_bytes() == photo_data
+
+        # Avatar field should now be "photo"
+        updated = store.get_child(child["id"])
+        assert updated["avatar"] == "photo"
+
+    def test_save_avatar_nonexistent_child(self, store):
+        assert store.save_avatar(999, b"data") is False
+
+    def test_get_avatar_path_no_file(self, store):
+        child = store.add_child("Alex")
+        assert store.get_avatar_path(child["id"]) is None
+
+    def test_delete_avatar(self, store):
+        child = store.add_child("Alex")
+        store.save_avatar(child["id"], b"photo data")
+        assert store.get_avatar_path(child["id"]) is not None
+
+        store.delete_avatar(child["id"])
+        assert store.get_avatar_path(child["id"]) is None
+
+    def test_delete_avatar_no_file(self, store):
+        child = store.add_child("Alex")
+        store.delete_avatar(child["id"])  # Should not raise
+
+    def test_avatar_dir_created(self, store):
+        avatar_dir = store.get_avatar_dir()
+        assert avatar_dir.exists()
+        assert avatar_dir.is_dir()
+
 
 class TestChildSettings:
     def test_set_and_get(self, store):

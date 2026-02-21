@@ -47,6 +47,7 @@ def app(cfg, store, mock_invidious):
     app.state.api_key = cfg.api_key
     api_routes.setup(store, mock_invidious, cfg)
     app.include_router(api_routes.router)
+    app.include_router(api_routes.public_router)
     return app
 
 
@@ -85,6 +86,7 @@ class TestAuth:
         app.state.api_key = ""
         api_routes.setup(store, mock_invidious, no_key_cfg)
         app.include_router(api_routes.router)
+        app.include_router(api_routes.public_router)
         c = TestClient(app)
         resp = c.get("/api/profiles")
         assert resp.status_code == 200
@@ -118,6 +120,121 @@ class TestProfilesEndpoint:
         client.post("/api/profiles", json={"name": "Sam"}, headers=auth_headers)
         resp = client.get("/api/profiles", headers=auth_headers)
         assert len(resp.json()["profiles"]) == 2
+
+
+class TestUpdateProfileEndpoint:
+    def test_update_name(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.put(
+            "/api/profiles/1",
+            json={"name": "Alexander"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Alexander"
+
+    def test_update_avatar(self, client, auth_headers, store):
+        store.add_child("Alex", "👦")
+        resp = client.put(
+            "/api/profiles/1",
+            json={"avatar": "👧"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["avatar"] == "👧"
+
+    def test_update_not_found(self, client, auth_headers):
+        resp = client.put(
+            "/api/profiles/999",
+            json={"name": "Ghost"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_update_name_conflict(self, client, auth_headers, store):
+        store.add_child("Alex")
+        store.add_child("Sam")
+        resp = client.put(
+            "/api/profiles/2",
+            json={"name": "Alex"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409
+
+    def test_update_no_fields(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.put(
+            "/api/profiles/1",
+            json={},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestDeleteProfileEndpoint:
+    def test_delete_profile(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.delete("/api/profiles/1", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "deleted"
+        # Verify child is gone
+        assert store.get_child(1) is None
+
+    def test_delete_not_found(self, client, auth_headers):
+        resp = client.delete("/api/profiles/999", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_delete_cascades(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        store.add_video("vid1", "Title", "Ch")
+        store.request_video(child["id"], "vid1")
+
+        resp = client.delete(f"/api/profiles/{child['id']}", headers=auth_headers)
+        assert resp.status_code == 200
+        # Settings and access should be gone
+        assert store.get_child_setting(child["id"], "daily_limit_minutes") == ""
+        assert store.get_video_status(child["id"], "vid1") is None
+
+
+class TestAvatarEndpoints:
+    def test_upload_avatar(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.post(
+            "/api/profiles/1/avatar",
+            files={"file": ("photo.jpg", b"\x89PNG fake image", "image/jpeg")},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "uploaded"
+
+    def test_get_avatar(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.save_avatar(child["id"], b"\x89PNG fake image data")
+
+        resp = client.get(f"/api/profiles/{child['id']}/avatar", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.content == b"\x89PNG fake image data"
+
+    def test_get_avatar_not_found(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get("/api/profiles/1/avatar", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_get_avatar_no_auth_required(self, client, store):
+        """Avatar GET is public — no auth headers needed."""
+        child = store.add_child("Alex")
+        store.save_avatar(child["id"], b"\x89PNG image")
+        resp = client.get(f"/api/profiles/{child['id']}/avatar")
+        assert resp.status_code == 200
+
+    def test_upload_avatar_child_not_found(self, client, auth_headers):
+        resp = client.post(
+            "/api/profiles/999/avatar",
+            files={"file": ("photo.jpg", b"data", "image/jpeg")},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
 
 
 class TestSearchEndpoint:

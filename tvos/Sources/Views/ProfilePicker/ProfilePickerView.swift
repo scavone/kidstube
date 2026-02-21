@@ -76,9 +76,9 @@ struct ProfileCardView: View {
     var body: some View {
         Button(action: onSelect) {
             VStack(spacing: 16) {
-                Text(profile.avatar)
-                    .font(.system(size: 64))
+                avatarView
                     .frame(width: 120, height: 120)
+                    .clipShape(Circle())
                     .background(
                         Circle()
                             .fill(Color.accentColor.opacity(isFocused ? 0.4 : 0.2))
@@ -95,6 +95,32 @@ struct ProfileCardView: View {
         }
         .buttonStyle(.plain)
         .focused($isFocused)
+    }
+
+    @ViewBuilder
+    private var avatarView: some View {
+        if let url = profile.avatarURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    Text(fallbackEmoji)
+                        .font(.system(size: 64))
+                default:
+                    ProgressView()
+                }
+            }
+        } else {
+            Text(profile.avatar)
+                .font(.system(size: 64))
+        }
+    }
+
+    private var fallbackEmoji: String {
+        "👤"
     }
 }
 
