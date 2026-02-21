@@ -508,33 +508,39 @@ networks:
 
 Build in this order. Each phase produces a testable, working increment.
 
-### Phase 1: Infrastructure (Day 1)
+### Phase 1: Infrastructure (Day 1) -- COMPLETE
 
-1. Create project directory structure
-2. Write `docker-compose.yml` with Invidious + PostgreSQL + Companion
-3. Write `.env.example` with all required variables
-4. Boot Invidious and verify it works: `curl http://localhost:3000/api/v1/search?q=test`
-5. Verify video stream proxying: fetch a video's `formatStreams` URL and confirm it's playable
+1. ~~Create project directory structure~~
+2. ~~Write `docker-compose.yml` with Invidious + PostgreSQL + Companion~~
+3. ~~Write `.env.example` with all required variables~~
+4. Boot Invidious and verify it works: `curl http://localhost:3000/api/v1/search?q=test` *(deploy-time)*
+5. Verify video stream proxying: fetch a video's `formatStreams` URL and confirm it's playable *(deploy-time)*
 
-### Phase 2: Server Core (Days 2–4)
+**49 tests passing. Committed.**
 
-1. Set up the FastAPI project in `server/`
-2. Port `config.py` and `utils.py` from BrainRotGuard (near-verbatim)
-3. Build `invidious/client.py` with search, metadata, stream URL extraction
-4. Build `data/video_store.py` with extended schema (children, child_settings, child_video_access)
-5. Implement core API endpoints: `/api/profiles`, `/api/search`, `/api/request`, `/api/status`, `/api/stream`, `/api/catalog`, `/api/watch-heartbeat`, `/api/time-status`
-6. Add API key authentication middleware
-7. Test all endpoints with curl/httpie
+### Phase 2: Server Core (Days 2–4) -- COMPLETE
 
-### Phase 3: Telegram Bot (Days 5–6)
+1. ~~Set up the FastAPI project in `server/`~~
+2. ~~Port `config.py` and `utils.py` from BrainRotGuard (adapted for Invidious + multi-child)~~
+3. ~~Build `invidious/client.py` with search, metadata, stream URL extraction~~
+4. ~~Build `data/video_store.py` with extended schema (children, child_settings, child_video_access)~~
+5. ~~Implement core API endpoints: `/api/profiles`, `/api/search`, `/api/request`, `/api/status`, `/api/stream`, `/api/catalog`, `/api/channels`, `/api/watch-heartbeat`, `/api/time-status`, `/api/schedule-status`~~
+6. ~~Add API key authentication middleware~~
+7. ~~Test all endpoints with pytest~~
 
-1. Port the Telegram bot from BrainRotGuard, adapting for multi-child
-2. Implement approval notification with child name + inline buttons
-3. Implement callback handling with child context in callback data
-4. Port commands: `/help`, `/pending`, `/approved`, `/stats`, `/channel`, `/time`, `/watch`, `/search`
-5. Add new commands: `/kids`, `/addkid`
-6. Wire up bot ↔ server communication (shared VideoStore instance)
-7. Test full approval flow: request via API → Telegram notification → approve → status poll shows approved
+**187 tests passing across config, utils, Invidious client, video store, auth, and full API integration. Committed.**
+
+### Phase 3: Telegram Bot (Days 5–6) -- COMPLETE
+
+1. ~~Port the Telegram bot from BrainRotGuard, adapting for multi-child~~
+2. ~~Implement approval notification with child name + inline buttons~~
+3. ~~Implement callback handling with child context in callback data~~
+4. ~~Port commands: `/help`, `/pending`, `/approved`, `/stats`, `/channel`, `/time`, `/watch`, `/search`~~
+5. ~~Add new commands: `/kids`, `/addkid`~~
+6. ~~Wire up bot ↔ server communication (shared VideoStore instance)~~
+7. ~~Test full approval flow: request via API → Telegram notification → approve → status poll shows approved~~
+
+**268 tests passing (81 new bot tests). Committed.**
 
 ### Phase 4: tvOS App (Days 7–10)
 

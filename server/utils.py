@@ -110,6 +110,20 @@ def format_time_12h(hhmm: str) -> str:
         return f"{h - 12}:{m:02d} PM"
 
 
+def format_duration(seconds: int | None) -> str:
+    """Format seconds into human-readable duration.
+
+    120 -> "2:00", 3661 -> "1:01:01", None -> "?"
+    """
+    if seconds is None or seconds < 0:
+        return "?"
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
 def is_within_schedule(
     start_str: str, end_str: str, tz_name: str = ""
 ) -> tuple[bool, str]:
