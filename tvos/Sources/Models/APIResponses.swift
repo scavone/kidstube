@@ -1,0 +1,99 @@
+import Foundation
+
+// MARK: - Video Request / Status
+
+struct VideoRequestBody: Codable {
+    let videoId: String
+    let childId: Int
+
+    enum CodingKeys: String, CodingKey {
+        case videoId = "video_id"
+        case childId = "child_id"
+    }
+}
+
+struct VideoRequestResponse: Codable {
+    let status: String
+    let videoId: String
+    let childId: Int
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case videoId = "video_id"
+        case childId = "child_id"
+    }
+}
+
+struct VideoStatusResponse: Codable {
+    let status: String
+}
+
+// MARK: - Stream
+
+struct StreamUrlResponse: Codable {
+    let url: String
+}
+
+// MARK: - Catalog
+
+struct CatalogResponse: Codable {
+    let videos: [Video]
+    let hasMore: Bool
+    let total: Int
+
+    enum CodingKeys: String, CodingKey {
+        case videos
+        case hasMore = "has_more"
+        case total
+    }
+}
+
+// MARK: - Channels
+
+struct Channel: Codable, Identifiable, Equatable {
+    let dbId: Int?
+    let channelName: String
+    var channelId: String?
+    var handle: String?
+    let status: String
+    var category: String?
+    var addedAt: String?
+
+    var id: String { channelId ?? channelName }
+
+    enum CodingKeys: String, CodingKey {
+        case dbId = "id"
+        case channelName = "channel_name"
+        case channelId = "channel_id"
+        case handle, status, category
+        case addedAt = "added_at"
+    }
+}
+
+struct ChannelsResponse: Codable {
+    let channels: [Channel]
+}
+
+// MARK: - Heartbeat
+
+struct HeartbeatBody: Codable {
+    let videoId: String
+    let childId: Int
+    let seconds: Int
+
+    enum CodingKeys: String, CodingKey {
+        case videoId = "video_id"
+        case childId = "child_id"
+        case seconds
+    }
+}
+
+struct HeartbeatResponse: Codable {
+    let remaining: Int
+}
+
+// MARK: - Error
+
+struct APIErrorResponse: Codable {
+    let detail: String
+}

@@ -36,11 +36,19 @@ docker-compose.override.yml
 
 # Xcode / tvOS
 *.xcuserdata
-*.xcworkspace
+xcuserdata/
 DerivedData/
 *.ipa
 *.dSYM.zip
 *.dSYM
+*.hmap
+*.xccheckout
+*.moved-aside
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
 
 # Coverage
 htmlcov/

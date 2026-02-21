@@ -542,18 +542,20 @@ Build in this order. Each phase produces a testable, working increment.
 
 **268 tests passing (81 new bot tests). Committed.**
 
-### Phase 4: tvOS App (Days 7–10)
+### Phase 4: tvOS App (Days 7–10) -- COMPLETE
 
-1. Create Xcode project targeting tvOS 17.0+
-2. Build `APIClient.swift` — URLSession wrapper for all server endpoints
-3. Build `ProfilePickerView` — "Who's watching?" grid
-4. Build `HomeView` with search bar, category filters, and catalog grid
-5. Build `SearchResultsView` with Request/Watch buttons
-6. Build `PendingView` with polling
-7. Build `PlayerView` — AVPlayerViewController wrapper with heartbeat timer
-8. Build time-remaining overlay and TimesUpView
-9. Polish focus navigation and Siri Remote interactions
-10. Archive as IPA
+1. ~~Create Xcode project targeting tvOS 17.0+~~
+2. ~~Build `APIClient.swift` — URLSession wrapper for all server endpoints~~
+3. ~~Build `ProfilePickerView` — "Who's watching?" grid~~
+4. ~~Build `HomeView` with search bar, category filters, and catalog grid~~
+5. ~~Build `SearchResultsView` with Request/Watch buttons~~
+6. ~~Build `PendingView` with polling~~
+7. ~~Build `PlayerView` — AVPlayerViewController wrapper with heartbeat timer~~
+8. ~~Build time-remaining overlay and TimesUpView~~
+9. ~~Polish focus navigation and Siri Remote interactions~~
+10. Archive as IPA *(requires Xcode with tvOS SDK — project is build-ready)*
+
+**66 tests passing (models, APIClient with mocks, config validation). Committed.**
 
 ### Phase 5: Sideloading & Integration (Day 11)
 

@@ -1,0 +1,125 @@
+import SwiftUI
+
+/// "Who's watching?" profile selection screen shown at launch.
+struct ProfilePickerView: View {
+    @StateObject private var viewModel = ProfilePickerViewModel()
+    let onProfileSelected: (ChildProfile) -> Void
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 200, maximum: 250), spacing: 40)
+    ]
+
+    var body: some View {
+        VStack(spacing: 40) {
+            Text("Who's watching?")
+                .font(.title)
+                .fontWeight(.bold)
+
+            if viewModel.isLoading {
+                ProgressView()
+                    .scaleEffect(1.5)
+            } else if viewModel.profiles.isEmpty {
+                emptyState
+            } else {
+                LazyVGrid(columns: columns, spacing: 40) {
+                    ForEach(viewModel.profiles) { profile in
+                        ProfileCardView(profile: profile) {
+                            onProfileSelected(profile)
+                        }
+                    }
+                }
+                .padding(.horizontal, 80)
+            }
+
+            if let error = viewModel.errorMessage {
+                Text(error)
+                    .foregroundColor(.red)
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .padding()
+
+                Button("Retry") {
+                    Task { await viewModel.loadProfiles() }
+                }
+            }
+        }
+        .padding(60)
+        .task {
+            await viewModel.loadProfiles()
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 20) {
+            Text("No profiles yet")
+                .font(.headline)
+                .foregroundColor(.secondary)
+            Text("Ask a parent to add a profile\nusing the Telegram bot with /addkid")
+                .font(.callout)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            Button("Refresh") {
+                Task { await viewModel.loadProfiles() }
+            }
+        }
+    }
+}
+
+/// Individual profile card with avatar and name.
+struct ProfileCardView: View {
+    let profile: ChildProfile
+    let onSelect: () -> Void
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(spacing: 16) {
+                Text(profile.avatar)
+                    .font(.system(size: 64))
+                    .frame(width: 120, height: 120)
+                    .background(
+                        Circle()
+                            .fill(Color.accentColor.opacity(isFocused ? 0.4 : 0.2))
+                    )
+
+                Text(profile.name)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+            .padding(20)
+            .scaleEffect(isFocused ? 1.1 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: isFocused)
+        }
+        .buttonStyle(.plain)
+        .focused($isFocused)
+    }
+}
+
+// MARK: - ViewModel
+
+@MainActor
+final class ProfilePickerViewModel: ObservableObject {
+    @Published var profiles: [ChildProfile] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+
+    private let apiClient: APIClient
+
+    init(apiClient: APIClient = APIClient()) {
+        self.apiClient = apiClient
+    }
+
+    func loadProfiles() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            profiles = try await apiClient.getProfiles()
+        } catch {
+            errorMessage = "Could not load profiles.\n\(error.localizedDescription)"
+        }
+        isLoading = false
+    }
+}
