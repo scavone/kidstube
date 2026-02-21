@@ -171,8 +171,4 @@ final class PlayerViewModel: ObservableObject {
         heartbeat.stop()
     }
 
-    deinit {
-        player?.pause()
-        heartbeat.stop()
-    }
 }

@@ -62,7 +62,4 @@ final class HeartbeatService: ObservableObject {
         }
     }
 
-    deinit {
-        task?.cancel()
-    }
 }
