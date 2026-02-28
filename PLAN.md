@@ -37,7 +37,7 @@ Since Apple TV 4K has no USB port, traditional sideloading tools like AltStore o
 This means the entire system (Invidious, BrainRotGuard server, atvloadly) can run as a single Docker Compose stack, and the tvOS app stays permanently installed without manual re-signing.
 
 **Requirements:**
-- A dedicated/burner Apple ID (free account is fine, 3 active apps max)
+- Your main Apple ID (free account is fine, 3 active sideloaded apps max)
 - Apple TV must be on the same network as the server
 - Initial pairing done through Apple TV Settings → Remote and Devices → Remote App and Devices
 

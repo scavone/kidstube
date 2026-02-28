@@ -9,6 +9,7 @@ struct HomeView: View {
 
     @StateObject private var viewModel = HomeViewModel()
     @State private var searchText = ""
+    @State private var columnCount = 4
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,9 +83,13 @@ struct HomeView: View {
 
     // MARK: - Catalog Grid
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 280, maximum: 320), spacing: 30)
-    ]
+    private var videoRows: [[Video]] {
+        let cols = max(1, columnCount)
+        guard !viewModel.videos.isEmpty else { return [] }
+        return stride(from: 0, to: viewModel.videos.count, by: cols).map { start in
+            Array(viewModel.videos[start..<min(start + cols, viewModel.videos.count)])
+        }
+    }
 
     private var catalogGrid: some View {
         ScrollView {
@@ -95,30 +100,45 @@ struct HomeView: View {
             } else if viewModel.videos.isEmpty {
                 emptyCatalog
             } else {
-                LazyVGrid(columns: columns, spacing: 30) {
-                    ForEach(viewModel.videos) { video in
-                        Button {
-                            onVideoSelected(video)
-                        } label: {
-                            VideoCard(
-                                title: video.title,
-                                channelName: video.channelName,
-                                thumbnailUrl: video.thumbnailUrl,
-                                duration: video.formattedDuration,
-                                tracksFocus: false
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .onAppear {
-                            // Infinite scroll: load more when near the end
-                            if video.videoId == viewModel.videos.last?.videoId && viewModel.hasMore {
-                                Task { await viewModel.loadCatalog(childId: child.id, reset: false) }
+                LazyVStack(spacing: 30) {
+                    ForEach(0..<videoRows.count, id: \.self) { rowIndex in
+                        let row = videoRows[rowIndex]
+                        HStack(spacing: 30) {
+                            ForEach(row) { video in
+                                Button {
+                                    onVideoSelected(video)
+                                } label: {
+                                    VideoCard(
+                                        title: video.title,
+                                        channelName: video.channelName,
+                                        thumbnailUrl: video.thumbnailUrl,
+                                        duration: video.formattedDuration,
+                                        tracksFocus: false
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .onAppear {
+                                    // Infinite scroll: load more when near the end
+                                    if video.videoId == viewModel.videos.last?.videoId && viewModel.hasMore {
+                                        Task { await viewModel.loadCatalog(childId: child.id, reset: false) }
+                                    }
+                                }
                             }
+                            Spacer(minLength: 0)
                         }
+                        .focusSection()
                     }
                 }
                 .padding(.horizontal, 60)
                 .padding(.bottom, 40)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.onAppear {
+                            let cols = max(1, Int((geo.size.width + 30) / (280 + 30)))
+                            if cols != columnCount { columnCount = cols }
+                        }
+                    }
+                )
 
                 if viewModel.isLoading {
                     ProgressView()

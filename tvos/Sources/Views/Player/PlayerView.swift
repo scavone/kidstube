@@ -126,7 +126,7 @@ struct AVPlayerViewControllerRepresentable: UIViewControllerRepresentable {
 @MainActor
 final class PlayerViewModel: ObservableObject {
     @Published var player: AVPlayer?
-    @Published var isLoading = false
+    @Published var isLoading = true
     @Published var errorMessage: String?
     @Published var heartbeat = HeartbeatService()
 

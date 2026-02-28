@@ -8,107 +8,106 @@ struct ContentView: View {
     @State private var pendingVideoId: String?
     @State private var pendingVideoTitle: String?
     @State private var scheduleUnlockTime: String = ""
-    @State private var isPlayerPresented = false
+    @State private var playerItem: PlayerItem?
 
     var body: some View {
-        Group {
-            switch screen {
-            case .profilePicker:
-                ProfilePickerView { profile in
-                    selectedChild = profile
-                    screen = .home
-                }
+        ZStack {
+            Group {
+                switch screen {
+                case .profilePicker:
+                    ProfilePickerView { profile in
+                        selectedChild = profile
+                        screen = .home
+                    }
 
-            case .home:
-                if let child = selectedChild {
-                    HomeView(
-                        child: child,
-                        onVideoSelected: { video in
-                            playApprovedVideo(videoId: video.videoId, title: video.title)
-                        },
-                        onSearchSubmitted: { query in
-                            screen = .search(query: query)
-                        },
-                        onSwitchProfile: {
-                            selectedChild = nil
-                            screen = .profilePicker
-                        }
+                case .home:
+                    if let child = selectedChild {
+                        HomeView(
+                            child: child,
+                            onVideoSelected: { video in
+                                playApprovedVideo(videoId: video.videoId, title: video.title)
+                            },
+                            onSearchSubmitted: { query in
+                                screen = .search(query: query)
+                            },
+                            onSwitchProfile: {
+                                selectedChild = nil
+                                screen = .profilePicker
+                            }
+                        )
+                    }
+
+                case .search(let query):
+                    if let child = selectedChild {
+                        SearchResultsView(
+                            query: query,
+                            child: child,
+                            onWatch: { videoId in
+                                playApprovedVideo(videoId: videoId, title: query)
+                            },
+                            onRequest: { result in
+                                requestVideo(result)
+                            },
+                            onBack: { screen = .home }
+                        )
+                    }
+
+                case .pending:
+                    if let child = selectedChild,
+                       let videoId = pendingVideoId,
+                       let title = pendingVideoTitle {
+                        PendingView(
+                            videoId: videoId,
+                            videoTitle: title,
+                            child: child,
+                            onApproved: { approvedId in
+                                playApprovedVideo(videoId: approvedId, title: title)
+                            },
+                            onDenied: {
+                                screen = .denied
+                            },
+                            onCancel: { screen = .home }
+                        )
+                    }
+
+                case .denied:
+                    DeniedView(
+                        videoTitle: pendingVideoTitle ?? "this video",
+                        onBack: { screen = .home }
                     )
-                }
 
-            case .search(let query):
-                if let child = selectedChild {
-                    SearchResultsView(
-                        query: query,
-                        child: child,
-                        onWatch: { videoId in
-                            playApprovedVideo(videoId: videoId, title: query)
-                        },
-                        onRequest: { result in
-                            requestVideo(result)
-                        },
+                case .timesUp:
+                    TimesUpView(
+                        childName: selectedChild?.name ?? "",
+                        onBack: { screen = .home }
+                    )
+
+                case .outsideSchedule:
+                    OutsideScheduleView(
+                        unlockTime: scheduleUnlockTime,
                         onBack: { screen = .home }
                     )
                 }
-
-            case .pending:
-                if let child = selectedChild,
-                   let videoId = pendingVideoId,
-                   let title = pendingVideoTitle {
-                    PendingView(
-                        videoId: videoId,
-                        videoTitle: title,
-                        child: child,
-                        onApproved: { approvedId in
-                            playApprovedVideo(videoId: approvedId, title: title)
-                        },
-                        onDenied: {
-                            screen = .denied
-                        },
-                        onCancel: { screen = .home }
-                    )
-                }
-
-            case .denied:
-                DeniedView(
-                    videoTitle: pendingVideoTitle ?? "this video",
-                    onBack: { screen = .home }
-                )
-
-            case .timesUp:
-                TimesUpView(
-                    childName: selectedChild?.name ?? "",
-                    onBack: { screen = .home }
-                )
-
-            case .outsideSchedule:
-                OutsideScheduleView(
-                    unlockTime: scheduleUnlockTime,
-                    onBack: { screen = .home }
-                )
             }
+            .animation(.easeInOut(duration: 0.25), value: screen)
         }
-        .animation(.easeInOut(duration: 0.25), value: screen)
-        .fullScreenCover(isPresented: $isPlayerPresented) {
-            if let child = selectedChild,
-               let videoId = pendingVideoId {
-                PlayerView(
-                    videoId: videoId,
-                    videoTitle: pendingVideoTitle ?? "",
-                    child: child,
-                    onTimesUp: {
-                        isPlayerPresented = false
-                        screen = .timesUp
-                    },
-                    onOutsideSchedule: {
-                        isPlayerPresented = false
-                        screen = .outsideSchedule
-                    },
-                    onDismiss: {
-                        isPlayerPresented = false
-                    }
-                )
-            }
+        .fullScreenCover(item: $playerItem) { item in
+            PlayerView(
+                videoId: item.videoId,
+                videoTitle: item.title,
+                child: item.child,
+                onTimesUp: {
+                    playerItem = nil
+                    screen = .timesUp
+                },
+                onOutsideSchedule: {
+                    playerItem = nil
+                    screen = .outsideSchedule
+                },
+                onDismiss: {
+                    playerItem = nil
+                }
+            )
         }
     }
 
@@ -117,7 +116,8 @@ struct ContentView: View {
     private func playApprovedVideo(videoId: String, title: String) {
         pendingVideoId = videoId
         pendingVideoTitle = title
-        isPlayerPresented = true
+        guard let child = selectedChild else { return }
+        playerItem = PlayerItem(videoId: videoId, title: title, child: child)
     }
 
     private func requestVideo(_ result: SearchResult) {
@@ -134,7 +134,7 @@ struct ContentView: View {
                 )
                 await MainActor.run {
                     if response.status == "approved" {
-                        isPlayerPresented = true
+                        playerItem = PlayerItem(videoId: result.videoId, title: result.title, child: child)
                     } else if response.status == "denied" {
                         screen = .denied
                     } else {
@@ -147,6 +147,15 @@ struct ContentView: View {
             }
         }
     }
+}
+
+// MARK: - Player Item
+
+struct PlayerItem: Identifiable {
+    let id = UUID()
+    let videoId: String
+    let title: String
+    let child: ChildProfile
 }
 
 // MARK: - App Screen State

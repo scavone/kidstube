@@ -12,10 +12,15 @@ struct SearchResultsView: View {
     let onBack: () -> Void
 
     @StateObject private var viewModel = SearchResultsViewModel()
+    @State private var columnCount = 4
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 280, maximum: 320), spacing: 30)
-    ]
+    private var resultRows: [[SearchResult]] {
+        let cols = max(1, columnCount)
+        guard !viewModel.results.isEmpty else { return [] }
+        return stride(from: 0, to: viewModel.results.count, by: cols).map { start in
+            Array(viewModel.results[start..<min(start + cols, viewModel.results.count)])
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,13 +51,28 @@ struct SearchResultsView: View {
                 } else if viewModel.results.isEmpty {
                     noResults
                 } else {
-                    LazyVGrid(columns: columns, spacing: 30) {
-                        ForEach(viewModel.results) { result in
-                            searchResultCard(result)
+                    LazyVStack(spacing: 30) {
+                        ForEach(0..<resultRows.count, id: \.self) { rowIndex in
+                            let row = resultRows[rowIndex]
+                            HStack(spacing: 30) {
+                                ForEach(row) { result in
+                                    searchResultCard(result)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .focusSection()
                         }
                     }
                     .padding(.horizontal, 60)
                     .padding(.bottom, 40)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.onAppear {
+                                let cols = max(1, Int((geo.size.width + 30) / (280 + 30)))
+                                if cols != columnCount { columnCount = cols }
+                            }
+                        }
+                    )
                 }
 
                 if let error = viewModel.errorMessage {

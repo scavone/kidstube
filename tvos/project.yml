@@ -39,3 +39,4 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kidstube.tests
+        GENERATE_INFOPLIST_FILE: "YES"
