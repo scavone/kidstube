@@ -255,6 +255,14 @@ class TelegramBot:
             page = int(parts[1])
             await self._show_channel_page(query.message, page)
             return
+        # Revoke from approved list: rev:child_id:page:video_id
+        if action == "rev" and len(parts) >= 4:
+            child_id = int(parts[1])
+            page = int(parts[2])
+            video_id = ":".join(parts[3:])
+            self.video_store.update_video_status(child_id, video_id, "denied")
+            await self._show_approved_page(query.message, child_id, page)
+            return
 
         # Approval/denial actions: action:child_id:video_id
         if len(parts) < 3:
@@ -677,20 +685,27 @@ class TelegramBot:
             return
 
         lines = [f"<b>Approved for {_esc(child_name)} ({total})</b>\n"]
+        revoke_buttons = []
         for i, v in enumerate(videos, start=offset + 1):
             title = v.get("title", v.get("video_id", "?"))
             channel = v.get("channel_name", "?")
             cat = v.get("effective_category", "")
             cat_tag = f" [{cat}]" if cat else ""
             lines.append(f"{i}. <b>{_esc(title)}</b>{cat_tag}\n   {_esc(channel)}")
+            vid = v.get("video_id", "")
+            revoke_buttons.append([InlineKeyboardButton(
+                f"Revoke {i}",
+                callback_data=f"rev:{child_id}:{page}:{vid}",
+            )])
 
-        buttons = []
+        nav_buttons = []
         if page > 0:
-            buttons.append(InlineKeyboardButton("< Prev", callback_data=f"approved_page:{child_id}:{page - 1}"))
+            nav_buttons.append(InlineKeyboardButton("< Prev", callback_data=f"approved_page:{child_id}:{page - 1}"))
         if offset + _APPROVED_PAGE_SIZE < total:
-            buttons.append(InlineKeyboardButton("Next >", callback_data=f"approved_page:{child_id}:{page + 1}"))
+            nav_buttons.append(InlineKeyboardButton("Next >", callback_data=f"approved_page:{child_id}:{page + 1}"))
 
-        keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+        rows = revoke_buttons + ([nav_buttons] if nav_buttons else [])
+        keyboard = InlineKeyboardMarkup(rows) if rows else None
         text = "\n".join(lines)
         await self._send_or_edit(message, text, keyboard=keyboard, edit=edit)
 
@@ -736,8 +751,12 @@ class TelegramBot:
 
         # /channel allow <name> [category]
         if subcmd == "allow" and len(args) >= 2:
-            name = args[1]
-            category = args[2].lower() if len(args) > 2 and args[2].lower() in ("edu", "fun") else None
+            if args[-1].lower() in ("edu", "fun"):
+                category = args[-1].lower()
+                name = " ".join(args[1:-1]) if len(args) > 2 else args[1]
+            else:
+                category = None
+                name = " ".join(args[1:])
             self.video_store.add_channel(name, "allowed", category=category)
             cat_label = f" ({category})" if category else ""
             await update.effective_message.reply_text(
@@ -747,7 +766,7 @@ class TelegramBot:
 
         # /channel block <name>
         elif subcmd == "block" and len(args) >= 2:
-            name = args[1]
+            name = " ".join(args[1:])
             self.video_store.add_channel(name, "blocked")
             await update.effective_message.reply_text(
                 f"Channel <b>{_esc(name)}</b> added to block list.",

@@ -473,7 +473,11 @@ class VideoStore:
         Returns (videos, total_count).
         """
         with self._lock:
-            where_parts = ["cva.status = 'approved'", "cva.child_id = ?"]
+            where_parts = [
+                "cva.status = 'approved'",
+                "cva.child_id = ?",
+                "COALESCE(ch.status, 'allowed') != 'blocked'",
+            ]
             params: list = [child_id]
 
             if category:
@@ -582,6 +586,17 @@ class VideoStore:
                        added_at = datetime('now')""",
                 (name, status, channel_id, handle, category, status, channel_id, handle, category),
             )
+            # Retroactively deny all approved/pending videos from this channel
+            if status == "blocked":
+                self.conn.execute(
+                    """UPDATE child_video_access SET status = 'denied', decided_at = datetime('now')
+                       WHERE status IN ('approved', 'pending')
+                         AND video_id IN (
+                             SELECT video_id FROM videos
+                             WHERE channel_name = ? COLLATE NOCASE
+                         )""",
+                    (name,),
+                )
             self.conn.commit()
             return True
 
