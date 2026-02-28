@@ -90,7 +90,8 @@ class VideoStore:
                 handle TEXT,
                 status TEXT NOT NULL DEFAULT 'allowed',
                 category TEXT,
-                added_at TEXT NOT NULL DEFAULT (datetime('now'))
+                added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_refreshed_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS word_filters (
@@ -117,6 +118,17 @@ class VideoStore:
                 ON search_log(searched_at);
         """)
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Apply schema migrations for existing databases."""
+        cursor = self.conn.execute("PRAGMA table_info(channels)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "last_refreshed_at" not in columns:
+            self.conn.execute(
+                "ALTER TABLE channels ADD COLUMN last_refreshed_at TEXT"
+            )
+            self.conn.commit()
 
     # ── Child Profiles ──────────────────────────────────────────────
 
@@ -619,6 +631,28 @@ class VideoStore:
                 "SELECT channel_name FROM channels WHERE status = 'blocked'"
             )
             return {row[0].lower() for row in cursor.fetchall()}
+
+    def get_channels_due_for_refresh(self, interval_hours: int = 6) -> list[dict]:
+        """Return allowed channels that haven't been refreshed within interval_hours."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """SELECT * FROM channels
+                   WHERE status = 'allowed' AND channel_id IS NOT NULL
+                     AND (last_refreshed_at IS NULL
+                          OR last_refreshed_at < datetime('now', ? || ' hours'))
+                   ORDER BY last_refreshed_at ASC NULLS FIRST""",
+                (str(-interval_hours),),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_channel_refreshed_at(self, channel_name: str) -> None:
+        """Stamp the current time as last_refreshed_at for a channel."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE channels SET last_refreshed_at = datetime('now') WHERE channel_name = ? COLLATE NOCASE",
+                (channel_name,),
+            )
+            self.conn.commit()
 
     # ── Word Filters ────────────────────────────────────────────────
 

@@ -18,6 +18,7 @@ from data.video_store import VideoStore
 from invidious.client import InvidiousClient
 from api import routes as api_routes
 from bot.telegram_bot import TelegramBot
+from services.channel_refresher import channel_refresh_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,9 +58,17 @@ def create_app(cfg=None) -> FastAPI:
         # Startup
         if bot:
             await bot.start()
+        refresh_task = asyncio.create_task(
+            channel_refresh_loop(store, inv_client, bot, cfg)
+        )
         logger.info("%s server initialized", cfg.app_name)
         yield
         # Shutdown
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
         if bot:
             await bot.stop()
         store.close()

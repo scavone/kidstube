@@ -3,6 +3,7 @@ import SwiftUI
 /// Main screen after profile selection: search bar + category filters + approved video catalog.
 struct HomeView: View {
     let child: ChildProfile
+    let refreshTrigger: Int
     let onVideoSelected: (Video) -> Void
     let onSearchSubmitted: (String) -> Void
     let onSwitchProfile: () -> Void
@@ -32,6 +33,9 @@ struct HomeView: View {
         }
         .task {
             await viewModel.loadInitialData(childId: child.id)
+        }
+        .onChange(of: refreshTrigger) {
+            Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
         }
     }
 

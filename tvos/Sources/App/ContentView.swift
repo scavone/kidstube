@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var pendingVideoTitle: String?
     @State private var scheduleUnlockTime: String = ""
     @State private var playerItem: PlayerItem?
+    @State private var catalogRefreshTrigger = 0
 
     var body: some View {
         ZStack {
@@ -24,6 +25,7 @@ struct ContentView: View {
                     if let child = selectedChild {
                         HomeView(
                             child: child,
+                            refreshTrigger: catalogRefreshTrigger,
                             onVideoSelected: { video in
                                 playApprovedVideo(videoId: video.videoId, title: video.title)
                             },
@@ -106,6 +108,7 @@ struct ContentView: View {
                 },
                 onDismiss: {
                     playerItem = nil
+                    catalogRefreshTrigger += 1
                 }
             )
         }

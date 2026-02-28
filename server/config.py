@@ -53,6 +53,7 @@ class InvidiousConfig:
     base_url: str = "http://invidious:3000"
     search_max_results: int = 20
     channel_cache_ttl: int = 1800
+    channel_refresh_hours: int = 6
 
 
 @dataclass
@@ -112,6 +113,7 @@ class Config:
                 base_url=os.environ.get("BRG_INVIDIOUS_URL", "http://invidious:3000"),
                 search_max_results=int(os.environ.get("BRG_SEARCH_MAX_RESULTS", "20")),
                 channel_cache_ttl=int(os.environ.get("BRG_CHANNEL_CACHE_TTL", "1800")),
+                channel_refresh_hours=int(os.environ.get("BRG_CHANNEL_REFRESH_HOURS", "6")),
             ),
             database=DatabaseConfig(
                 path=os.environ.get("BRG_DB_PATH", "db/videos.db"),
