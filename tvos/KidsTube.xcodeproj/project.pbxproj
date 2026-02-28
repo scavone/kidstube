@@ -24,6 +24,7 @@
 		A17001AC40585E0EE2C2F5A7 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3471996C07E3CAAD366459B /* APIClientTests.swift */; };
 		A2C9C262F6CB2E75C5A91170 /* SearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47DB79B1757870A990CD2FB5 /* SearchResultsView.swift */; };
 		B5E9DFD44417BACB803A19AF /* PendingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8FF22F8D0FB28ABC4FCAFE8 /* PendingView.swift */; };
+		B735BF7D5A9A9CEDCB1CE1F9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 022003F81C1CA2057FEE6BBD /* Assets.xcassets */; };
 		C8F5554277897C6452767ADC /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92D027527EC22BD349825819 /* APIClient.swift */; };
 		D0C286722817362B2A8478BB /* KidsTubeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE7EEA9FEAB2C699AA4C6A9 /* KidsTubeApp.swift */; };
 		E9B2B05685310772D8C14825 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70F2637203B562EC8EE3F147 /* ContentView.swift */; };
@@ -44,6 +45,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		022003F81C1CA2057FEE6BBD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0A69925AF8BB02374AE088A7 /* ProfilePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePickerView.swift; sourceTree = "<group>"; };
 		173969E802F4428A9502BE17 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		23EB740E49D4C98D7F1F6154 /* ConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigTests.swift; sourceTree = "<group>"; };
@@ -86,6 +88,7 @@
 		0AC8D26354B17EA462692BE5 = {
 			isa = PBXGroup;
 			children = (
+				022003F81C1CA2057FEE6BBD /* Assets.xcassets */,
 				8686E5A5E30C9B183FDDA989 /* Sources */,
 				E992751EA9F34D93C6BB7980 /* Tests */,
 				E06F93CA256FD605FED68908 /* Products */,
@@ -233,6 +236,7 @@
 			buildConfigurationList = 33B2E1DE2777A906DC52ECC4 /* Build configuration list for PBXNativeTarget "KidsTube" */;
 			buildPhases = (
 				8E2C3A879E0F5E6195CDD5D8 /* Sources */,
+				967B59C7F2490F8629158075 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -292,6 +296,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		967B59C7F2490F8629158075 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B735BF7D5A9A9CEDCB1CE1F9 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		16A19C393BB24FF2A4F83312 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -345,7 +360,7 @@
 		26389555AA3FC8B2279F0230 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
@@ -364,7 +379,7 @@
 		36DEC0845D453959DBC06A00 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
