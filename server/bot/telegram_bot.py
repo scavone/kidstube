@@ -69,11 +69,13 @@ class TelegramBot:
         admin_chat_id: str,
         video_store: VideoStore,
         config,
+        inv_client=None,
     ):
         self.bot_token = bot_token
         self.admin_chat_id = int(admin_chat_id) if admin_chat_id else 0
         self.video_store = video_store
         self.config = config
+        self.inv_client = inv_client
         self._app = None
 
     # ── Lifecycle ──────────────────────────────────────────────────
@@ -303,11 +305,34 @@ class TelegramBot:
                 # Auto-approve this video for the requesting child
                 self.video_store.update_video_status(child_id, video_id, "approved")
                 self._set_video_category(video_id, category)
+
+                # Best-effort: import channel videos for ALL children
+                import_count = 0
+                if self.inv_client and ch_id:
+                    try:
+                        all_children = self.video_store.get_children()
+                        all_child_ids = [c["id"] for c in all_children]
+                        channel_videos = await self.inv_client.get_channel_videos(ch_id)
+                        import_count = self.video_store.bulk_import_channel_videos(
+                            channel_videos, category, all_child_ids
+                        )
+                        logger.info(
+                            "Imported %d videos from channel %s for %d children",
+                            import_count, ch_name, len(all_child_ids),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to import channel videos for %s (best-effort)",
+                            ch_name,
+                            exc_info=True,
+                        )
+
                 label = "Educational" if category == "edu" else "Entertainment"
+                import_note = f"\n{import_count} channel videos imported." if import_count > 0 else ""
                 await query.edit_message_caption(
                     caption=(
                         f"Channel <b>{_esc(ch_name)}</b> allowed ({label}).\n"
-                        f"Video approved for {_esc(child_name)}."
+                        f"Video approved for {_esc(child_name)}.{import_note}"
                     ),
                     parse_mode=ParseMode.HTML,
                 )

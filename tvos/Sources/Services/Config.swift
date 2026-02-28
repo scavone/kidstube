@@ -5,10 +5,10 @@ import Foundation
 enum Config {
     /// Base URL of the BrainRotGuard server (no trailing slash).
     /// Example: "http://192.168.1.100:8080"
-    static let serverBaseURL = "http://192.168.1.100:8080"
+    static let serverBaseURL = "http://localhost:8080"
 
     /// Shared API key matching the server's BRG_API_KEY environment variable.
-    static let apiKey = "your-secret-key-here"
+    static let apiKey = "2WuqrTwPuVhQxHEwDt00FyQD1AnujUcUT2ZbosD6aBU"
 
     /// How often (in seconds) the pending view polls for approval status.
     static let pollInterval: TimeInterval = 3.0

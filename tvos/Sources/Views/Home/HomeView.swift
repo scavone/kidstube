@@ -104,7 +104,8 @@ struct HomeView: View {
                                 title: video.title,
                                 channelName: video.channelName,
                                 thumbnailUrl: video.thumbnailUrl,
-                                duration: video.formattedDuration
+                                duration: video.formattedDuration,
+                                tracksFocus: false
                             )
                         }
                         .buttonStyle(.plain)

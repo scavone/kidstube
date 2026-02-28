@@ -373,10 +373,20 @@ class TestStreamEndpoint:
         store.request_video(child["id"], "abc12345678")
         store.update_video_status(child["id"], "abc12345678", "approved")
 
+        mock_video = {
+            "video_id": "abc12345678",
+            "title": "Title",
+            "channel_name": "Channel",
+            "format_streams": [
+                {"type": "video/mp4", "url": "http://test/stream.mp4", "qualityLabel": "360p"}
+            ],
+            "adaptive_formats": [],
+            "hls_url": None,
+        }
         with patch.object(
-            mock_invidious, "get_stream_url",
+            mock_invidious, "get_video",
             new_callable=AsyncMock,
-            return_value="http://invidious:3000/stream/abc12345678.mp4",
+            return_value=mock_video,
         ):
             resp = client.get("/api/stream/abc12345678?child_id=1", headers=auth_headers)
 

@@ -297,6 +297,59 @@ class VideoStore:
             ).fetchone()
             return dict(row) if row else None
 
+    def bulk_import_channel_videos(
+        self,
+        videos: list[dict],
+        category: str,
+        child_ids: list[int],
+    ) -> int:
+        """Bulk-insert videos and auto-approve them for all specified children.
+
+        Used when a channel is allowed — imports existing channel videos
+        and grants access to all children.  Uses INSERT OR IGNORE so
+        existing videos and existing access decisions are preserved.
+
+        Returns the number of new videos inserted.
+        """
+        if not videos or not child_ids:
+            return 0
+
+        inserted = 0
+        with self._lock:
+            for v in videos:
+                vid = v.get("video_id")
+                if not vid:
+                    continue
+
+                cursor = self.conn.execute(
+                    """INSERT OR IGNORE INTO videos
+                       (video_id, title, channel_name, channel_id,
+                        thumbnail_url, duration, category)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        vid,
+                        v.get("title", ""),
+                        v.get("channel_name", ""),
+                        v.get("channel_id"),
+                        v.get("thumbnail_url"),
+                        v.get("duration"),
+                        category,
+                    ),
+                )
+                if cursor.rowcount > 0:
+                    inserted += 1
+
+                for child_id in child_ids:
+                    self.conn.execute(
+                        """INSERT OR IGNORE INTO child_video_access
+                           (child_id, video_id, status, decided_at)
+                           VALUES (?, ?, 'approved', datetime('now'))""",
+                        (child_id, vid),
+                    )
+
+            self.conn.commit()
+        return inserted
+
     # ── Per-Child Video Access ──────────────────────────────────────
 
     def request_video(self, child_id: int, video_id: str) -> str:

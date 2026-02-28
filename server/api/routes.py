@@ -4,12 +4,18 @@ All endpoints require API key authentication (Bearer token).
 The tvOS app passes child_id on every request to identify the active profile.
 """
 
+import asyncio
 import logging
+import math
+import os
 import re
+import shutil
+import tempfile
 import time
+import uuid
 
-from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Query, HTTPException, Request, UploadFile, File
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from api.auth import verify_api_key
 from api.models import (
@@ -43,6 +49,13 @@ _last_heartbeat: dict[tuple[int, str], float] = {}
 _HEARTBEAT_MIN_INTERVAL = 10
 _HEARTBEAT_EVICT_AGE = 120
 _heartbeat_last_cleanup: float = 0.0
+
+# Server-side ffmpeg HLS muxing for HQ adaptive streams
+_FFMPEG_PATH = shutil.which("ffmpeg")
+
+# Active HLS sessions: session_id -> {dir, process, video_id, created_at}
+_hls_sessions: dict[str, dict] = {}
+_HLS_SESSION_MAX_AGE = 7200  # 2 hours
 
 
 def setup(store, inv_client, cfg, notify_cb=None):
@@ -157,10 +170,25 @@ async def search_videos(
             if not any(p.search(r.get("title", "")) for p in word_patterns)
         ]
 
-    # Annotate each result with the child's access status
+    # Annotate each result with the child's access status.
+    # For allowed-channel videos without an existing record, auto-approve them
+    # so the child sees "Watch" instead of "Request".
     for r in results:
         vid = r.get("video_id", "")
         status = video_store.get_video_status(child_id, vid)
+        if status is None:
+            ch_name = r.get("channel_name", "")
+            if ch_name and video_store.is_channel_allowed(ch_name):
+                video_store.add_video(
+                    video_id=vid,
+                    title=r.get("title", ""),
+                    channel_name=ch_name,
+                    channel_id=r.get("channel_id"),
+                    thumbnail_url=r.get("thumbnail_url"),
+                    duration=r.get("duration"),
+                )
+                video_store.request_video(child_id, vid)  # auto-approves
+                status = "approved"
         r["access_status"] = status  # None, 'pending', 'approved', 'denied'
 
     video_store.record_search(q, child_id, len(results))
@@ -225,6 +253,7 @@ async def get_status(
 @router.get("/stream/{video_id}")
 async def get_stream(
     video_id: str,
+    request: Request,
     child_id: int = Query(..., gt=0),
 ):
     if not VIDEO_ID_RE.match(video_id):
@@ -235,12 +264,104 @@ async def get_stream(
     if status != "approved":
         raise HTTPException(status_code=403, detail="Video not approved for this child")
 
-    # Fetch fresh stream URL (they expire)
-    url = await invidious_client.get_stream_url(video_id)
+    # Fetch video metadata once — used for all quality tiers
+    video = await invidious_client.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=502, detail="Could not resolve video from Invidious")
+
+    # 1. Prefer HLS via ffmpeg adaptive muxing (up to 1080p)
+    if _FFMPEG_PATH:
+        adaptive = video.get("adaptive_formats", [])
+        pair = invidious_client.pick_best_adaptive_pair(adaptive)
+        if pair:
+            duration = video.get("duration", 0)
+            session_id = await _start_hls_session(video_id, pair, duration=duration)
+            base = str(request.base_url).rstrip("/")
+            hls_url = f"{base}/api/hls/{session_id}/index.m3u8"
+            logger.info("Directing %s to HLS session %s", video_id, session_id)
+            return StreamUrlResponse(url=hls_url)
+
+    # 2. Try HLS URL from Invidious (if instance provides it)
+    hls_url = video.get("hls_url")
+    if hls_url:
+        return StreamUrlResponse(url=hls_url)
+
+    # 3. Fall back to best progressive MP4
+    streams = video.get("format_streams", [])
+    url = invidious_client._pick_best_stream(streams)
     if not url:
-        raise HTTPException(status_code=502, detail="Could not resolve stream URL from Invidious")
+        raise HTTPException(status_code=502, detail="No playable streams found")
 
     return StreamUrlResponse(url=url)
+
+
+# ── HLS Serving (ffmpeg adaptive mux) ─────────────────────────────
+
+@public_router.get("/hls/{session_id}/{filename}")
+async def serve_hls(session_id: str, filename: str):
+    """Serve HLS playlist and segment files for an active muxing session."""
+    # Evict expired sessions periodically
+    _cleanup_expired_sessions()
+
+    session = _hls_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+
+    # Prevent path traversal
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    filepath = os.path.join(session["dir"], filename)
+
+    if filename.endswith(".m3u8"):
+        duration = session.get("duration", 0)
+        if duration > 0:
+            # Synthetic VOD playlist: AVPlayer sees total duration + scrubber
+            content = _generate_vod_playlist(duration)
+            return Response(
+                content=content,
+                media_type="application/vnd.apple.mpegurl",
+                headers={"Cache-Control": "no-cache, no-store"},
+            )
+        # Fall back to ffmpeg's playlist if duration unknown
+        for _ in range(20):
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                break
+            await asyncio.sleep(0.5)
+        if not os.path.exists(filepath):
+            raise HTTPException(status_code=404, detail="Playlist not ready")
+        return FileResponse(
+            filepath,
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-cache, no-store"},
+        )
+
+    if filename.endswith(".ts"):
+        proc = session.get("process")
+
+        # If segment doesn't exist, check if we need to seek ffmpeg ahead
+        if not (os.path.exists(filepath) and os.path.getsize(filepath) > 0):
+            try:
+                seg_index = int(filename.replace("seg_", "").replace(".ts", ""))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid segment name")
+            highest = _highest_segment_on_disk(session["dir"])
+            if proc and proc.returncode is None and seg_index > highest + 3:
+                await _restart_ffmpeg_at(session_id, seg_index)
+                proc = session["process"]
+
+        # Wait for ffmpeg to create the segment
+        for _ in range(60):  # 30 seconds max
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                break
+            if proc and proc.returncode is not None:
+                raise HTTPException(status_code=404, detail="Segment not available")
+            await asyncio.sleep(0.5)
+        if not os.path.exists(filepath):
+            raise HTTPException(status_code=404, detail="Segment not ready")
+        return FileResponse(filepath, media_type="video/mp2t")
+
+    raise HTTPException(status_code=400, detail="Unsupported file type")
 
 
 # ── Catalog ─────────────────────────────────────────────────────────
@@ -382,6 +503,203 @@ async def schedule_status(child_id: int = Query(..., gt=0)):
         start=format_time_12h(start) if start else "midnight",
         end=format_time_12h(end) if end else "midnight",
     )
+
+
+# ── HLS Session Management ─────────────────────────────────────────
+
+async def _start_hls_session(
+    video_id: str, pair: tuple[str, str], duration: float = 0
+) -> str:
+    """Start ffmpeg HLS mux in background and wait for the first segment.
+
+    Returns the session_id that can be used to serve HLS files.
+    """
+    video_url, audio_url = pair
+    session_id = uuid.uuid4().hex[:12]
+    session_dir = os.path.join(tempfile.gettempdir(), f"brg_hls_{session_id}")
+    os.makedirs(session_dir, exist_ok=True)
+
+    playlist_path = os.path.join(session_dir, "index.m3u8")
+    segment_pattern = os.path.join(session_dir, "seg_%03d.ts")
+
+    cmd = [
+        _FFMPEG_PATH,
+        "-nostdin", "-loglevel", "warning",
+        "-reconnect", "1", "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+        "-i", video_url,
+        "-reconnect", "1", "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+        "-i", audio_url,
+        "-c", "copy",
+        "-f", "hls",
+        "-hls_time", "4",
+        "-hls_playlist_type", "event",
+        "-hls_segment_type", "mpegts",
+        "-hls_segment_filename", segment_pattern,
+        "-hls_flags", "temp_file+independent_segments",
+        playlist_path,
+    ]
+
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    _hls_sessions[session_id] = {
+        "dir": session_dir,
+        "process": process,
+        "video_id": video_id,
+        "duration": duration,
+        "pair": pair,
+        "created_at": time.time(),
+    }
+
+    logger.info("HLS session %s started for %s (pid %d)", session_id, video_id, process.pid)
+
+    # Wait for the first segment to be written (temp_file ensures it's complete)
+    first_segment = os.path.join(session_dir, "seg_000.ts")
+    for _ in range(60):  # 30 seconds max
+        if os.path.exists(first_segment) and os.path.getsize(first_segment) > 0:
+            break
+        if process.returncode is not None:
+            stderr = await process.stderr.read()
+            _cleanup_hls_session(session_id)
+            logger.error("ffmpeg HLS failed for %s: %s", video_id, stderr.decode(errors="replace")[:500])
+            raise HTTPException(status_code=502, detail="Failed to start HLS stream")
+        await asyncio.sleep(0.5)
+    else:
+        process.kill()
+        await process.wait()
+        _cleanup_hls_session(session_id)
+        raise HTTPException(status_code=504, detail="HLS segment generation timed out")
+
+    return session_id
+
+
+def _generate_vod_playlist(total_duration: float, segment_time: float = 4.0) -> str:
+    """Generate a synthetic VOD playlist with known total duration.
+
+    Lists all expected segments upfront with #EXT-X-ENDLIST so AVPlayer
+    shows the full duration scrubber and enables seeking from the start.
+    Segments are served by the HLS endpoint as ffmpeg creates them.
+    """
+    n_segments = max(1, math.ceil(total_duration / segment_time))
+    lines = [
+        "#EXTM3U",
+        "#EXT-X-VERSION:3",
+        f"#EXT-X-TARGETDURATION:{int(math.ceil(segment_time))}",
+        "#EXT-X-MEDIA-SEQUENCE:0",
+        "#EXT-X-PLAYLIST-TYPE:VOD",
+        "#EXT-X-INDEPENDENT-SEGMENTS",
+    ]
+    remaining = total_duration
+    for i in range(n_segments):
+        dur = min(segment_time, remaining)
+        if dur < 0.1:
+            break
+        lines.append(f"#EXTINF:{dur:.3f},")
+        lines.append(f"seg_{i:03d}.ts")
+        remaining -= segment_time
+    lines.append("#EXT-X-ENDLIST")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _highest_segment_on_disk(session_dir: str) -> int:
+    """Find the highest segment number that exists on disk."""
+    highest = -1
+    for f in os.listdir(session_dir):
+        if f.startswith("seg_") and f.endswith(".ts"):
+            try:
+                highest = max(highest, int(f[4:-3]))
+            except ValueError:
+                pass
+    return highest
+
+
+async def _restart_ffmpeg_at(session_id: str, target_seg: int):
+    """Kill current ffmpeg and restart seeking to the target segment.
+
+    Used when the user seeks far ahead of where ffmpeg has processed.
+    ffmpeg uses input-level -ss for fast keyframe-based seeking.
+    """
+    session = _hls_sessions.get(session_id)
+    if not session:
+        return
+
+    proc = session.get("process")
+    if proc and proc.returncode is None:
+        proc.kill()
+        await proc.wait()
+
+    pair = session.get("pair")
+    if not pair:
+        return
+
+    video_url, audio_url = pair
+    session_dir = session["dir"]
+    playlist_path = os.path.join(session_dir, "index.m3u8")
+    segment_pattern = os.path.join(session_dir, "seg_%03d.ts")
+    target_time = str(target_seg * 4.0)
+
+    cmd = [
+        _FFMPEG_PATH,
+        "-nostdin", "-loglevel", "warning",
+        "-ss", target_time,
+        "-reconnect", "1", "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+        "-i", video_url,
+        "-ss", target_time,
+        "-reconnect", "1", "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+        "-i", audio_url,
+        "-c", "copy",
+        "-f", "hls",
+        "-hls_time", "4",
+        "-hls_playlist_type", "event",
+        "-hls_segment_type", "mpegts",
+        "-start_number", str(target_seg),
+        "-hls_segment_filename", segment_pattern,
+        "-hls_flags", "temp_file+independent_segments",
+        playlist_path,
+    ]
+
+    new_process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    session["process"] = new_process
+    logger.info(
+        "Restarted ffmpeg for session %s at seg %d (%.0fs)",
+        session_id, target_seg, float(target_time),
+    )
+
+
+def _cleanup_hls_session(session_id: str):
+    """Remove a session's temp directory and kill its ffmpeg process."""
+    session = _hls_sessions.pop(session_id, None)
+    if not session:
+        return
+    proc = session.get("process")
+    if proc and proc.returncode is None:
+        proc.kill()
+    shutil.rmtree(session["dir"], ignore_errors=True)
+    logger.info("Cleaned up HLS session %s", session_id)
+
+
+def _cleanup_expired_sessions():
+    """Remove sessions older than _HLS_SESSION_MAX_AGE."""
+    now = time.time()
+    expired = [
+        sid for sid, s in _hls_sessions.items()
+        if now - s["created_at"] > _HLS_SESSION_MAX_AGE
+    ]
+    for sid in expired:
+        _cleanup_hls_session(sid)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

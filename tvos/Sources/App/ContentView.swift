@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var pendingVideoId: String?
     @State private var pendingVideoTitle: String?
     @State private var scheduleUnlockTime: String = ""
+    @State private var isPlayerPresented = false
 
     var body: some View {
         Group {
@@ -74,21 +75,6 @@ struct ContentView: View {
                     onBack: { screen = .home }
                 )
 
-            case .player:
-                if let child = selectedChild,
-                   let videoId = pendingVideoId {
-                    PlayerView(
-                        videoId: videoId,
-                        videoTitle: pendingVideoTitle ?? "",
-                        child: child,
-                        onTimesUp: { screen = .timesUp },
-                        onOutsideSchedule: {
-                            screen = .outsideSchedule
-                        },
-                        onDismiss: { screen = .home }
-                    )
-                }
-
             case .timesUp:
                 TimesUpView(
                     childName: selectedChild?.name ?? "",
@@ -103,6 +89,27 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: screen)
+        .fullScreenCover(isPresented: $isPlayerPresented) {
+            if let child = selectedChild,
+               let videoId = pendingVideoId {
+                PlayerView(
+                    videoId: videoId,
+                    videoTitle: pendingVideoTitle ?? "",
+                    child: child,
+                    onTimesUp: {
+                        isPlayerPresented = false
+                        screen = .timesUp
+                    },
+                    onOutsideSchedule: {
+                        isPlayerPresented = false
+                        screen = .outsideSchedule
+                    },
+                    onDismiss: {
+                        isPlayerPresented = false
+                    }
+                )
+            }
+        }
     }
 
     // MARK: - Navigation Helpers
@@ -110,7 +117,7 @@ struct ContentView: View {
     private func playApprovedVideo(videoId: String, title: String) {
         pendingVideoId = videoId
         pendingVideoTitle = title
-        screen = .player
+        isPlayerPresented = true
     }
 
     private func requestVideo(_ result: SearchResult) {
@@ -127,7 +134,7 @@ struct ContentView: View {
                 )
                 await MainActor.run {
                     if response.status == "approved" {
-                        screen = .player
+                        isPlayerPresented = true
                     } else if response.status == "denied" {
                         screen = .denied
                     } else {
@@ -150,7 +157,6 @@ enum AppScreen: Equatable {
     case search(query: String)
     case pending
     case denied
-    case player
     case timesUp
     case outsideSchedule
 }

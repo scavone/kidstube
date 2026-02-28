@@ -66,6 +66,8 @@ class InvidiousClient:
         video = self._normalize_video(data)
         if video:
             video["format_streams"] = data.get("formatStreams", [])
+            video["adaptive_formats"] = data.get("adaptiveFormats", [])
+            video["hls_url"] = data.get("hlsUrl")
         return video
 
     async def get_stream_url(
@@ -73,16 +75,93 @@ class InvidiousClient:
     ) -> Optional[str]:
         """Extract the best playable stream URL for AVPlayer.
 
-        Prefers: progressive MP4, highest quality <= 1080p.
-        Returns the proxied Invidious URL (streams through local Invidious).
+        Priority:
+        1. hlsUrl from Invidious API — adaptive bitrate, up to 1080p+,
+           natively supported by AVPlayer on tvOS.
+        2. Best progressive MP4 from formatStreams (muxed, typically 360-720p).
+
         Stream URLs expire — always fetch fresh, never cache.
         """
         video = await self.get_video(video_id)
         if not video:
             return None
 
+        # 1. Try HLS URL from video metadata (adaptive quality)
+        hls_url = video.get("hls_url")
+        if hls_url:
+            logger.info("Using HLS stream for %s", video_id)
+            return hls_url
+
+        # 2. Fall back to progressive MP4
         streams = video.get("format_streams", [])
-        return self._pick_best_stream(streams, quality)
+        selected = self._pick_best_stream(streams, quality)
+        if selected:
+            labels = [s.get("qualityLabel", "?") for s in streams if "video/mp4" in s.get("type", "")]
+            logger.info("Using progressive stream for %s (available: %s)", video_id, ", ".join(labels))
+        return selected
+
+    def pick_best_adaptive_pair(
+        self, adaptive_formats: list[dict]
+    ) -> Optional[tuple[str, str]]:
+        """Pick the best H.264 video + AAC audio pair from adaptive formats.
+
+        Returns (video_url, audio_url) or None if no suitable pair found.
+        Intended for server-side remuxing via ffmpeg.
+        """
+        video_streams = []
+        for fmt in adaptive_formats:
+            mime = fmt.get("type", "")
+            if "avc1" not in mime:
+                continue
+            url = fmt.get("url", "")
+            if not url:
+                continue
+            res = fmt.get("resolution", "")
+            height = 0
+            if res:
+                digits = res.replace("p", "").strip()
+                if digits.isdigit():
+                    height = int(digits)
+            if height == 0:
+                label = fmt.get("qualityLabel", "")
+                for part in label.replace("p60", "p").replace("p50", "p").replace("p30", "p").split("p"):
+                    if part.isdigit():
+                        height = int(part)
+                        break
+            if 0 < height <= 1080:
+                bitrate = int(fmt.get("bitrate", 0) or 0)
+                video_streams.append({"url": url, "height": height, "bitrate": bitrate})
+
+        if not video_streams:
+            return None
+
+        video_streams.sort(key=lambda s: (s["height"], s["bitrate"]), reverse=True)
+        best_video = video_streams[0]
+
+        audio_streams = []
+        for fmt in adaptive_formats:
+            mime = fmt.get("type", "")
+            if "mp4a" not in mime:
+                continue
+            url = fmt.get("url", "")
+            if not url:
+                continue
+            bitrate = int(fmt.get("bitrate", 0) or 0)
+            audio_streams.append({"url": url, "bitrate": bitrate})
+
+        if not audio_streams:
+            return None
+
+        audio_streams.sort(key=lambda s: s["bitrate"], reverse=True)
+        best_audio = audio_streams[0]
+
+        logger.info(
+            "Adaptive pair: %dp video (%dkbps) + %dkbps audio",
+            best_video["height"],
+            best_video["bitrate"] // 1000,
+            best_audio["bitrate"] // 1000,
+        )
+        return (best_video["url"], best_audio["url"])
 
     async def get_channel_videos(
         self, channel_id: str, continuation: str = ""
@@ -174,9 +253,8 @@ class InvidiousClient:
     ) -> Optional[str]:
         """Pick the best progressive MP4 stream for AVPlayer.
 
-        AVPlayer on tvOS supports progressive MP4 and HLS natively.
-        Invidious formatStreams are progressive; adaptiveFormats are DASH (not supported).
-        We filter for video/mp4 and pick the highest quality <= 1080p.
+        Progressive formatStreams are muxed (video+audio) but typically max 720p.
+        Used as fallback when no suitable adaptive format is found.
         """
         mp4_streams = []
         for s in streams:

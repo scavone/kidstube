@@ -45,6 +45,7 @@ def create_app(cfg=None) -> FastAPI:
             admin_chat_id=cfg.telegram.admin_chat_id,
             video_store=store,
             config=cfg,
+            inv_client=inv_client,
         )
 
     # Wire up API routes with bot notification callback

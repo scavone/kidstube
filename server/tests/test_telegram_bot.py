@@ -1022,6 +1022,102 @@ class TestCallbackHandling:
         await bot._handle_callback(update, context)
 
 
+# ── Channel Video Import ──────────────────────────────────────────
+
+class TestChannelVideoImport:
+    """Tests for bulk channel video import when a channel is allowed."""
+
+    def _make_callback_update(self, data: str):
+        update = MagicMock()
+        update.effective_chat.id = 12345
+        update.effective_user.id = 12345
+        update.callback_query = AsyncMock()
+        update.callback_query.data = data
+        update.callback_query.answer = AsyncMock()
+        update.callback_query.edit_message_caption = AsyncMock()
+        update.callback_query.message = AsyncMock()
+        return update
+
+    @pytest.mark.asyncio
+    async def test_allowchan_imports_channel_videos(self, store, cfg, context):
+        """Allowing a channel should import videos for all children."""
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        store.add_video("vid12345678", "Trigger Video", "GoodChannel", channel_id="UC123")
+        store.request_video(alex["id"], "vid12345678")
+
+        mock_inv = AsyncMock()
+        mock_inv.get_channel_videos = AsyncMock(return_value=[
+            {"video_id": "ch_vid1", "title": "Ch Video 1", "channel_name": "GoodChannel", "channel_id": "UC123", "duration": 120},
+            {"video_id": "ch_vid2", "title": "Ch Video 2", "channel_name": "GoodChannel", "channel_id": "UC123", "duration": 240},
+        ])
+        bot = TelegramBot("fake-token", "12345", store, cfg, inv_client=mock_inv)
+
+        update = self._make_callback_update(f"allowchan_edu:{alex['id']}:vid12345678")
+        await bot._handle_callback(update, context)
+
+        assert store.is_channel_allowed("GoodChannel")
+        assert store.get_video_status(alex["id"], "vid12345678") == "approved"
+        # Imported videos should exist and be approved for BOTH children
+        assert store.get_video("ch_vid1") is not None
+        assert store.get_video("ch_vid2") is not None
+        assert store.get_video_status(alex["id"], "ch_vid1") == "approved"
+        assert store.get_video_status(sam["id"], "ch_vid1") == "approved"
+        assert store.get_video_status(alex["id"], "ch_vid2") == "approved"
+        assert store.get_video_status(sam["id"], "ch_vid2") == "approved"
+        # Confirmation should mention import count
+        caption = update.callback_query.edit_message_caption.call_args[1]["caption"]
+        assert "2 channel videos imported" in caption
+
+    @pytest.mark.asyncio
+    async def test_allowchan_import_failure_still_allows_channel(self, store, cfg, context):
+        """If Invidious fails, the channel should still be allowed."""
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Trigger Video", "FailChannel", channel_id="UC_FAIL")
+        store.request_video(child["id"], "vid12345678")
+
+        mock_inv = AsyncMock()
+        mock_inv.get_channel_videos = AsyncMock(side_effect=Exception("Invidious down"))
+        bot = TelegramBot("fake-token", "12345", store, cfg, inv_client=mock_inv)
+
+        update = self._make_callback_update(f"allowchan_edu:{child['id']}:vid12345678")
+        await bot._handle_callback(update, context)
+
+        assert store.is_channel_allowed("FailChannel")
+        assert store.get_video_status(child["id"], "vid12345678") == "approved"
+
+    @pytest.mark.asyncio
+    async def test_allowchan_no_inv_client(self, bot, store, context):
+        """Bot without inv_client should still allow channel (no import)."""
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Video", "Channel", channel_id="UC1")
+        store.request_video(child["id"], "vid12345678")
+
+        assert bot.inv_client is None
+        update = self._make_callback_update(f"allowchan_edu:{child['id']}:vid12345678")
+        await bot._handle_callback(update, context)
+
+        assert store.is_channel_allowed("Channel")
+        assert store.get_video_status(child["id"], "vid12345678") == "approved"
+
+    @pytest.mark.asyncio
+    async def test_allowchan_no_channel_id_skips_import(self, store, cfg, context):
+        """If video has no channel_id, import is skipped but channel is still allowed."""
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Video", "Channel")  # No channel_id
+        store.request_video(child["id"], "vid12345678")
+
+        mock_inv = AsyncMock()
+        bot = TelegramBot("fake-token", "12345", store, cfg, inv_client=mock_inv)
+
+        update = self._make_callback_update(f"allowchan_fun:{child['id']}:vid12345678")
+        await bot._handle_callback(update, context)
+
+        assert store.is_channel_allowed("Channel")
+        assert store.get_video_status(child["id"], "vid12345678") == "approved"
+        mock_inv.get_channel_videos.assert_not_called()
+
+
 # ── Multi-Child Approval Flow ─────────────────────────────────────
 
 class TestMultiChildApproval:

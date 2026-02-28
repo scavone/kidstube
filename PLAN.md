@@ -555,7 +555,18 @@ Build in this order. Each phase produces a testable, working increment.
 9. ~~Polish focus navigation and Siri Remote interactions~~
 10. Archive as IPA *(requires Xcode with tvOS SDK — project is build-ready)*
 
-**66 tests passing (models, APIClient with mocks, config validation). Committed.**
+**68 tests passing (models, APIClient with mocks, config validation). Committed.**
+
+### Phase 4.5: Child Profile Management -- COMPLETE
+
+1. ~~Data layer: `update_child()` method, avatar file storage/retrieval on disk~~
+2. ~~API: `PUT /api/profiles/{id}` (update name/avatar), `DELETE /api/profiles/{id}`, `POST /api/profiles/{id}/avatar` (upload photo), `GET /api/profiles/{id}/avatar` (serve photo, public — no auth required)~~
+3. ~~Telegram bot: `/editkid` (rename, change avatar), `/removekid` (delete child + cascade), photo message handler (send photo with caption "avatar ChildName")~~
+4. ~~tvOS: `ProfileCardView` supports photo avatars via `AsyncImage`, `ChildProfile` model has `hasPhotoAvatar` and `avatarURL` computed properties~~
+5. ~~Server dependency: added `python-multipart` for file uploads~~
+6. ~~Tests: 307 server tests passing, 68 tvOS tests passing~~
+
+**Committed.**
 
 ### Phase 5: Sideloading & Integration (Day 11)
 

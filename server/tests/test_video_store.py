@@ -198,6 +198,74 @@ class TestVideos:
         assert store.get_video("nonexistent") is None
 
 
+class TestBulkImportChannelVideos:
+    def test_inserts_videos(self, store):
+        child = store.add_child("Alex")
+        videos = [
+            {"video_id": "vid1", "title": "V1", "channel_name": "Ch", "channel_id": "UC1", "duration": 100},
+            {"video_id": "vid2", "title": "V2", "channel_name": "Ch", "channel_id": "UC1", "duration": 200},
+        ]
+        count = store.bulk_import_channel_videos(videos, "edu", [child["id"]])
+        assert count == 2
+        assert store.get_video("vid1") is not None
+        assert store.get_video("vid2") is not None
+
+    def test_approves_for_all_children(self, store):
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        videos = [
+            {"video_id": "vid1", "title": "V1", "channel_name": "Ch", "channel_id": "UC1"},
+        ]
+        store.bulk_import_channel_videos(videos, "edu", [alex["id"], sam["id"]])
+        assert store.get_video_status(alex["id"], "vid1") == "approved"
+        assert store.get_video_status(sam["id"], "vid1") == "approved"
+
+    def test_skips_existing_videos(self, store):
+        store.add_video("vid1", "Original Title", "Ch")
+        child = store.add_child("Alex")
+        videos = [
+            {"video_id": "vid1", "title": "New Title", "channel_name": "Ch"},
+        ]
+        count = store.bulk_import_channel_videos(videos, "edu", [child["id"]])
+        assert count == 0
+        assert store.get_video("vid1")["title"] == "Original Title"
+
+    def test_preserves_existing_access_decisions(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid1", "V1", "Ch")
+        store.request_video(child["id"], "vid1")
+        store.update_video_status(child["id"], "vid1", "denied")
+        videos = [{"video_id": "vid1", "title": "V1", "channel_name": "Ch"}]
+        store.bulk_import_channel_videos(videos, "edu", [child["id"]])
+        assert store.get_video_status(child["id"], "vid1") == "denied"
+
+    def test_empty_list(self, store):
+        child = store.add_child("Alex")
+        count = store.bulk_import_channel_videos([], "edu", [child["id"]])
+        assert count == 0
+
+    def test_no_children(self, store):
+        videos = [{"video_id": "vid1", "title": "V1", "channel_name": "Ch"}]
+        count = store.bulk_import_channel_videos(videos, "edu", [])
+        assert count == 0
+
+    def test_sets_category(self, store):
+        child = store.add_child("Alex")
+        videos = [{"video_id": "vid1", "title": "V1", "channel_name": "Ch"}]
+        store.bulk_import_channel_videos(videos, "edu", [child["id"]])
+        assert store.get_video("vid1")["category"] == "edu"
+
+    def test_skips_videos_without_id(self, store):
+        child = store.add_child("Alex")
+        videos = [
+            {"title": "No ID", "channel_name": "Ch"},
+            {"video_id": "vid1", "title": "Has ID", "channel_name": "Ch"},
+        ]
+        count = store.bulk_import_channel_videos(videos, "fun", [child["id"]])
+        assert count == 1
+        assert store.get_video("vid1") is not None
+
+
 class TestChildVideoAccess:
     def test_request_pending(self, store):
         child = store.add_child("Alex")

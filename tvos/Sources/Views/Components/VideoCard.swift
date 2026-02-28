@@ -8,21 +8,24 @@ struct VideoCard: View {
     let thumbnailUrl: String?
     let duration: String
     let badge: String?
-
-    @FocusState private var isFocused: Bool
+    /// When true, the card tracks focus itself (for standalone use).
+    /// Set to false when the card is inside a Button to avoid stealing focus.
+    let tracksFocus: Bool
 
     init(
         title: String,
         channelName: String,
         thumbnailUrl: String?,
         duration: String,
-        badge: String? = nil
+        badge: String? = nil,
+        tracksFocus: Bool = true
     ) {
         self.title = title
         self.channelName = channelName
         self.thumbnailUrl = thumbnailUrl
         self.duration = duration
         self.badge = badge
+        self.tracksFocus = tracksFocus
     }
 
     var body: some View {
@@ -74,9 +77,7 @@ struct VideoCard: View {
                 .lineLimit(1)
         }
         .frame(width: 300)
-        .scaleEffect(isFocused ? 1.05 : 1.0)
-        .animation(.easeInOut(duration: 0.15), value: isFocused)
-        .focused($isFocused)
+        .modifier(FocusScaleModifier(tracksFocus: tracksFocus))
     }
 
     @ViewBuilder
@@ -117,6 +118,25 @@ struct VideoCard: View {
         case "pending": return .orange.opacity(0.85)
         case "denied": return .red.opacity(0.85)
         default: return .blue.opacity(0.85)
+        }
+    }
+}
+
+/// Conditionally applies focus tracking and scale effect.
+/// When `tracksFocus` is false, the view is not focusable (avoids stealing
+/// focus from a parent Button on tvOS).
+private struct FocusScaleModifier: ViewModifier {
+    let tracksFocus: Bool
+    @FocusState private var isFocused: Bool
+
+    func body(content: Content) -> some View {
+        if tracksFocus {
+            content
+                .scaleEffect(isFocused ? 1.05 : 1.0)
+                .animation(.easeInOut(duration: 0.15), value: isFocused)
+                .focused($isFocused)
+        } else {
+            content
         }
     }
 }
