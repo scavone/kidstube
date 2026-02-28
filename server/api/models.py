@@ -52,6 +52,7 @@ class VideoStatusResponse(BaseModel):
 
 class StreamUrlResponse(BaseModel):
     url: str
+    session_id: Optional[str] = None
 
 
 class TimeStatusResponse(BaseModel):

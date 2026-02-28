@@ -32,6 +32,12 @@ struct VideoStatusResponse: Codable {
 
 struct StreamUrlResponse: Codable {
     let url: String
+    let sessionId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case sessionId = "session_id"
+    }
 }
 
 // MARK: - Catalog

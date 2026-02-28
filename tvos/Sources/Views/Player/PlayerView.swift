@@ -131,6 +131,7 @@ final class PlayerViewModel: ObservableObject {
     @Published var heartbeat = HeartbeatService()
 
     private let apiClient: APIClient
+    private var hlsSessionId: String?
 
     init(apiClient: APIClient = APIClient()) {
         self.apiClient = apiClient
@@ -141,7 +142,8 @@ final class PlayerViewModel: ObservableObject {
         errorMessage = nil
 
         do {
-            let streamUrl = try await apiClient.getStreamURL(videoId: videoId, childId: childId)
+            let (streamUrl, sessionId) = try await apiClient.getStreamURL(videoId: videoId, childId: childId)
+            self.hlsSessionId = sessionId
             guard let url = URL(string: streamUrl) else {
                 errorMessage = "Invalid stream URL"
                 isLoading = false
@@ -169,6 +171,12 @@ final class PlayerViewModel: ObservableObject {
         player?.pause()
         player = nil
         heartbeat.stop()
+        // Kill server-side ffmpeg immediately
+        if let sessionId = hlsSessionId {
+            let client = apiClient
+            Task { await client.deleteHLSSession(sessionId: sessionId) }
+            hlsSessionId = nil
+        }
     }
 
 }

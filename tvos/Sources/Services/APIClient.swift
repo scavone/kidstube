@@ -91,12 +91,23 @@ final class APIClient: Sendable {
     // MARK: - Streaming
 
     /// Get a fresh playable stream URL for an approved video.
-    func getStreamURL(videoId: String, childId: Int) async throws -> String {
+    /// Returns (url, sessionId) — sessionId is non-nil for HLS muxing sessions.
+    func getStreamURL(videoId: String, childId: Int) async throws -> (url: String, sessionId: String?) {
         let response: StreamUrlResponse = try await get(
             "/api/stream/\(videoId)",
             query: ["child_id": String(childId)]
         )
-        return response.url
+        return (response.url, response.sessionId)
+    }
+
+    /// Kill an active HLS muxing session on the server.
+    /// Best-effort — failures are silently ignored.
+    func deleteHLSSession(sessionId: String) async {
+        do {
+            let _: [String: String] = try await delete("/api/hls/\(sessionId)")
+        } catch {
+            // Best-effort cleanup — don't propagate errors
+        }
     }
 
     // MARK: - Catalog
@@ -159,6 +170,17 @@ final class APIClient: Sendable {
         let url = try buildURL(path: path, query: query)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+        applyAuth(&request)
+        return try await execute(request)
+    }
+
+    private func delete<T: Decodable>(
+        _ path: String,
+        query: [String: String] = [:]
+    ) async throws -> T {
+        let url = try buildURL(path: path, query: query)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
         applyAuth(&request)
         return try await execute(request)
     }

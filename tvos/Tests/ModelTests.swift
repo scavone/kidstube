@@ -307,11 +307,20 @@ struct APIResponseModelTests {
         #expect(response.childId == 1)
     }
 
-    @Test("Decode stream URL response")
+    @Test("Decode stream URL response without session_id")
     func decodeStreamUrlResponse() throws {
         let json = "{\"url\":\"http://invidious:3000/latest_version?id=abc&itag=18\"}".data(using: .utf8)!
         let response = try JSONDecoder().decode(StreamUrlResponse.self, from: json)
         #expect(response.url.contains("invidious"))
+        #expect(response.sessionId == nil)
+    }
+
+    @Test("Decode stream URL response with session_id")
+    func decodeStreamUrlResponseWithSession() throws {
+        let json = "{\"url\":\"http://localhost:8080/api/hls/abc123/index.m3u8\",\"session_id\":\"abc123\"}".data(using: .utf8)!
+        let response = try JSONDecoder().decode(StreamUrlResponse.self, from: json)
+        #expect(response.url.contains("hls"))
+        #expect(response.sessionId == "abc123")
     }
 
     @Test("Decode catalog response")

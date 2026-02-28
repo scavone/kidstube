@@ -56,6 +56,7 @@ _FFMPEG_PATH = shutil.which("ffmpeg")
 # Active HLS sessions: session_id -> {dir, process, video_id, created_at}
 _hls_sessions: dict[str, dict] = {}
 _HLS_SESSION_MAX_AGE = 7200  # 2 hours
+_HLS_SEGMENT_SECONDS = 2  # Short segments for faster initial playback
 
 
 def setup(store, inv_client, cfg, notify_cb=None):
@@ -279,7 +280,7 @@ async def get_stream(
             base = str(request.base_url).rstrip("/")
             hls_url = f"{base}/api/hls/{session_id}/index.m3u8"
             logger.info("Directing %s to HLS session %s", video_id, session_id)
-            return StreamUrlResponse(url=hls_url)
+            return StreamUrlResponse(url=hls_url, session_id=session_id)
 
     # 2. Try HLS URL from Invidious (if instance provides it)
     hls_url = video.get("hls_url")
@@ -362,6 +363,19 @@ async def serve_hls(session_id: str, filename: str):
         return FileResponse(filepath, media_type="video/mp2t")
 
     raise HTTPException(status_code=400, detail="Unsupported file type")
+
+
+@router.delete("/hls/{session_id}")
+async def delete_hls_session(session_id: str):
+    """Kill ffmpeg and clean up an HLS session immediately.
+
+    Called by the tvOS app when the player is dismissed so we don't
+    leave ffmpeg running for up to 2 hours.
+    """
+    if session_id not in _hls_sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    _cleanup_hls_session(session_id)
+    return {"status": "deleted", "session_id": session_id}
 
 
 # ── Catalog ─────────────────────────────────────────────────────────
@@ -533,7 +547,7 @@ async def _start_hls_session(
         "-i", audio_url,
         "-c", "copy",
         "-f", "hls",
-        "-hls_time", "4",
+        "-hls_time", str(_HLS_SEGMENT_SECONDS),
         "-hls_playlist_type", "event",
         "-hls_segment_type", "mpegts",
         "-hls_segment_filename", segment_pattern,
@@ -578,7 +592,7 @@ async def _start_hls_session(
     return session_id
 
 
-def _generate_vod_playlist(total_duration: float, segment_time: float = 4.0) -> str:
+def _generate_vod_playlist(total_duration: float, segment_time: float = _HLS_SEGMENT_SECONDS) -> str:
     """Generate a synthetic VOD playlist with known total duration.
 
     Lists all expected segments upfront with #EXT-X-ENDLIST so AVPlayer
@@ -642,7 +656,7 @@ async def _restart_ffmpeg_at(session_id: str, target_seg: int):
     session_dir = session["dir"]
     playlist_path = os.path.join(session_dir, "index.m3u8")
     segment_pattern = os.path.join(session_dir, "seg_%03d.ts")
-    target_time = str(target_seg * 4.0)
+    target_time = str(target_seg * _HLS_SEGMENT_SECONDS)
 
     cmd = [
         _FFMPEG_PATH,
@@ -657,7 +671,7 @@ async def _restart_ffmpeg_at(session_id: str, target_seg: int):
         "-i", audio_url,
         "-c", "copy",
         "-f", "hls",
-        "-hls_time", "4",
+        "-hls_time", str(_HLS_SEGMENT_SECONDS),
         "-hls_playlist_type", "event",
         "-hls_segment_type", "mpegts",
         "-start_number", str(target_seg),
