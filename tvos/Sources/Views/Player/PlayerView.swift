@@ -52,12 +52,23 @@ struct PlayerView: View {
     // MARK: - Loading
 
     private var loadingState: some View {
-        VStack(spacing: 20) {
-            ProgressView()
-                .scaleEffect(1.5)
-            Text("Loading video...")
-                .font(.headline)
-                .foregroundColor(.secondary)
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 24) {
+                ProgressView()
+                    .scaleEffect(2.0)
+                    .tint(.white)
+                Text(videoTitle)
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 80)
+                Text("Loading video...")
+                    .font(.callout)
+                    .foregroundColor(.gray)
+            }
         }
     }
 
