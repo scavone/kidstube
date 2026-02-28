@@ -340,14 +340,21 @@ async def serve_hls(session_id: str, filename: str):
     if filename.endswith(".ts"):
         proc = session.get("process")
 
-        # If segment doesn't exist, check if we need to seek ffmpeg ahead
+        # If segment doesn't exist, check if we need to restart ffmpeg
         if not (os.path.exists(filepath) and os.path.getsize(filepath) > 0):
             try:
                 seg_index = int(filename.replace("seg_", "").replace(".ts", ""))
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid segment name")
             highest = _highest_segment_on_disk(session["dir"])
-            if proc and proc.returncode is None and seg_index > highest + 3:
+            ffmpeg_start = session.get("ffmpeg_start_seg", 0)
+            need_restart = (
+                proc and proc.returncode is None and (
+                    seg_index > highest + 3          # forward seek
+                    or seg_index < ffmpeg_start      # backward seek (gap)
+                )
+            )
+            if need_restart:
                 await _restart_ffmpeg_at(session_id, seg_index)
                 proc = session["process"]
 
@@ -568,6 +575,7 @@ async def _start_hls_session(
         "duration": duration,
         "pair": pair,
         "created_at": time.time(),
+        "ffmpeg_start_seg": 0,
     }
 
     logger.info("HLS session %s started for %s (pid %d)", session_id, video_id, process.pid)
@@ -687,6 +695,7 @@ async def _restart_ffmpeg_at(session_id: str, target_seg: int):
     )
 
     session["process"] = new_process
+    session["ffmpeg_start_seg"] = target_seg
     logger.info(
         "Restarted ffmpeg for session %s at seg %d (%.0fs)",
         session_id, target_seg, float(target_time),
