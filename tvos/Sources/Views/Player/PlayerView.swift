@@ -75,28 +75,32 @@ struct PlayerView: View {
     // MARK: - Error
 
     private func errorState(_ message: String) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48))
-                .foregroundColor(.orange)
-            Text("Couldn't play video")
-                .font(.headline)
-            Text(message)
-                .font(.callout)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 80)
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-            HStack(spacing: 30) {
-                Button("Retry") {
-                    Task {
-                        await viewModel.loadAndPlay(videoId: videoId, childId: child.id)
+            VStack(spacing: 20) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 48))
+                    .foregroundColor(.orange)
+                Text("Couldn't play video")
+                    .font(.headline)
+                Text(message)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 80)
+
+                HStack(spacing: 30) {
+                    Button("Retry") {
+                        Task {
+                            await viewModel.loadAndPlay(videoId: videoId, childId: child.id)
+                        }
                     }
-                }
-                .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent)
 
-                Button("Go Back", action: onDismiss)
-                    .buttonStyle(.bordered)
+                    Button("Go Back", action: onDismiss)
+                        .buttonStyle(.bordered)
+                }
             }
         }
     }
