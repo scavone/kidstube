@@ -50,6 +50,7 @@ DerivedData/
 
 # Claude Code
 CLAUDE.md
+.claude/*
 
 # Coverage
 htmlcov/
