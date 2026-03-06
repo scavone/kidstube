@@ -323,12 +323,17 @@ class TelegramBot:
             await self._import_starter_channel(query, child_id, handle)
             return
 
-        # Pending list actions: pnd_edu/pnd_fun/pnd_deny:child_id:page:video_id
-        if action in ("pnd_edu", "pnd_fun", "pnd_deny") and len(parts) >= 4:
+        # Pending list actions: pnd_edu/pnd_fun/pnd_deny/pnd_resend:child_id:page:video_id
+        if action in ("pnd_edu", "pnd_fun", "pnd_deny", "pnd_resend") and len(parts) >= 4:
             child_id = int(parts[1])
             page = int(parts[2])
             video_id = ":".join(parts[3:])
-            if action == "pnd_deny":
+            if action == "pnd_resend":
+                child = self.video_store.get_child(child_id)
+                video = self.video_store.get_video(video_id)
+                if child and video:
+                    await self.notify_new_request(child, video)
+            elif action == "pnd_deny":
                 self.video_store.update_video_status(child_id, video_id, "denied")
             else:
                 category = "edu" if action == "pnd_edu" else "fun"
@@ -913,6 +918,7 @@ class TelegramBot:
                 InlineKeyboardButton(f"✓ Edu {i}", callback_data=f"pnd_edu:{child_id}:{page}:{video_id}"),
                 InlineKeyboardButton(f"✓ Fun {i}", callback_data=f"pnd_fun:{child_id}:{page}:{video_id}"),
                 InlineKeyboardButton(f"✗ {i}", callback_data=f"pnd_deny:{child_id}:{page}:{video_id}"),
+                InlineKeyboardButton(f"🔄 {i}", callback_data=f"pnd_resend:{child_id}:{page}:{video_id}"),
             ])
 
         # Pagination buttons

@@ -1635,6 +1635,36 @@ class TestPendingActions:
 
         assert store.get_video_status(child["id"], "vid12345678") == "denied"
 
+    @pytest.mark.asyncio
+    async def test_pending_list_shows_resend_button(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Test Video", "Channel", duration=120)
+        store.request_video(child["id"], "vid12345678")
+
+        context.args = []
+        await bot._cmd_pending(admin_update, context)
+        keyboard = admin_update.effective_message.reply_text.call_args[1]["reply_markup"]
+        # First row of buttons is for the first pending item
+        button_data = [btn.callback_data for btn in keyboard.inline_keyboard[0]]
+        assert any("pnd_resend" in d for d in button_data)
+
+    @pytest.mark.asyncio
+    async def test_pnd_resend_triggers_notify(self, bot, store, context):
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Test Video", "Channel")
+        store.request_video(child["id"], "vid12345678")
+
+        update = self._make_callback_update(f"pnd_resend:{child['id']}:0:vid12345678")
+        bot.notify_new_request = AsyncMock()
+        await bot._handle_callback(update, context)
+
+        bot.notify_new_request.assert_called_once()
+        call_args = bot.notify_new_request.call_args[0]
+        assert call_args[0]["id"] == child["id"]
+        assert call_args[1]["video_id"] == "vid12345678"
+        # Video should still be pending (resend doesn't change status)
+        assert store.get_video_status(child["id"], "vid12345678") == "pending"
+
 
 # ── Free Day Pass (#32) ──────────────────────────────────────────
 
