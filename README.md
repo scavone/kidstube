@@ -8,14 +8,14 @@ Built on [Invidious](https://github.com/iv-org/invidious) to proxy YouTube witho
 
 ```
                         ┌─────────────────────────────┐
-                        │         Home Server          │
-                        │                              │
+                        │         Home Server         │
+                        │                             │
   ┌───────────┐         │  ┌──────────┐  ┌──────────┐ │
   │ Apple TV  │◄────────┼──│ KidsTube │──│Invidious │ │
   │ (tvOS app)│────────►│  │  Server  │  │ (YouTube │ │
   └───────────┘  :8080  │  │ (FastAPI)│  │  proxy)  │ │
                         │  └────┬─────┘  └──────────┘ │
-                        └───────┼──────────────────────┘
+                        └───────┼─────────────────────┘
                                 │
                         ┌───────▼─────────┐
                         │  Telegram Bot   │
