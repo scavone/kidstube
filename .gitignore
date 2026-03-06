@@ -48,6 +48,9 @@ DerivedData/
 .build/
 .swiftpm/
 
+# Claude Code
+CLAUDE.md
+
 # Coverage
 htmlcov/
 .coverage
