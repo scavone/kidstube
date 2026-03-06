@@ -50,6 +50,7 @@
 		022003F81C1CA2057FEE6BBD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0A69925AF8BB02374AE088A7 /* ProfilePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePickerView.swift; sourceTree = "<group>"; };
 		173969E802F4428A9502BE17 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		1981EE99523A9279B0F42B4D /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 		23EB740E49D4C98D7F1F6154 /* ConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigTests.swift; sourceTree = "<group>"; };
 		36915EFA6900A27429E58E08 /* ChannelCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelCard.swift; sourceTree = "<group>"; };
 		47DB79B1757870A990CD2FB5 /* SearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultsView.swift; sourceTree = "<group>"; };
@@ -95,6 +96,7 @@
 				022003F81C1CA2057FEE6BBD /* Assets.xcassets */,
 				8686E5A5E30C9B183FDDA989 /* Sources */,
 				E992751EA9F34D93C6BB7980 /* Tests */,
+				48511C624D4B6E6A33C3C57E /* tvos */,
 				E06F93CA256FD605FED68908 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -122,6 +124,15 @@
 				7CE7EEA9FEAB2C699AA4C6A9 /* KidsTubeApp.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		48511C624D4B6E6A33C3C57E /* tvos */ = {
+			isa = PBXGroup;
+			children = (
+				1981EE99523A9279B0F42B4D /* Secrets.xcconfig */,
+			);
+			name = tvos;
+			path = .;
 			sourceTree = "<group>";
 		};
 		5586627826B0527AA9D9AA96 /* Player */ = {
@@ -413,6 +424,7 @@
 		};
 		4E8593A2BA6FC5670200EF10 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1981EE99523A9279B0F42B4D /* Secrets.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -471,6 +483,7 @@
 		};
 		90AD4D6AAC198A9A4089D031 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1981EE99523A9279B0F42B4D /* Secrets.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
