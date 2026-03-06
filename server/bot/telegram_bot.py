@@ -463,6 +463,20 @@ class TelegramBot:
         if not await self._check_admin(update):
             return
 
+        # First-run: if no children exist yet, suggest creating one
+        children = self._all_children()
+        if not children:
+            app_name = self.config.app_name
+            await update.effective_message.reply_text(
+                f"Welcome to <b>{_esc(app_name)}</b>!\n\n"
+                "You don't have any child profiles yet. "
+                "Get started by creating one:\n\n"
+                "/addkid Name [Avatar]\n\n"
+                "Example: /addkid Alex or /addkid Sam 👧",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
         app_name = self.config.app_name
         text = (
             f"<b>{_esc(app_name)} Bot Commands</b>\n\n"
@@ -571,6 +585,10 @@ class TelegramBot:
             await update.effective_message.reply_text(
                 f"{avatar} <b>{_esc(name)}</b> profile created!\nDaily limit: {default_limit} minutes",
                 parse_mode=ParseMode.HTML,
+            )
+            # Offer starter channels if this child has none
+            await self._maybe_prompt_starter_channels(
+                update.effective_message, child["id"], name
             )
             return
 
@@ -752,6 +770,11 @@ class TelegramBot:
             f"{avatar} <b>{_esc(name)}</b> profile created!\n"
             f"Daily limit: {default_limit} minutes",
             parse_mode=ParseMode.HTML,
+        )
+
+        # Offer starter channels if this child has none
+        await self._maybe_prompt_starter_channels(
+            update.effective_message, child["id"], name
         )
 
     async def _cmd_editkid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1209,6 +1232,37 @@ class TelegramBot:
         keyboard = InlineKeyboardMarkup(rows) if rows else None
         text = "\n".join(lines)
         await self._send_or_edit(message, text, keyboard=keyboard, edit=edit)
+
+    async def _maybe_prompt_starter_channels(self, message, child_id: int, child_name: str):
+        """After child creation, offer starter channels if the child has none.
+
+        Sends at most once per child (tracked via 'starter_prompted' setting).
+        Skips if the child already has channels or was already prompted.
+        """
+        # Already prompted?
+        if self.video_store.get_child_setting(child_id, "starter_prompted"):
+            return
+        # Already has channels?
+        channels = self.video_store.get_channels(child_id, status="allowed")
+        if channels:
+            return
+        # Has starter channels available?
+        if not self._load_starter_channels():
+            return
+        # Mark as prompted (before sending, so we never double-send)
+        self.video_store.set_child_setting(child_id, "starter_prompted", "1")
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "Browse Starter Channels",
+                callback_data=f"starter_page:{child_id}:0",
+            )
+        ]])
+        await message.reply_text(
+            f"Want to get started with some kid-friendly channels for "
+            f"<b>{_esc(child_name)}</b>? Tap below to browse.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
 
     def _load_starter_channels(self) -> dict:
         """Load starter channels from bundled YAML."""

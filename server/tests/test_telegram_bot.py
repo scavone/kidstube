@@ -200,7 +200,8 @@ class TestChildResolution:
 
 class TestHelpCommand:
     @pytest.mark.asyncio
-    async def test_help_shows_commands(self, bot, admin_update, context):
+    async def test_help_shows_commands(self, bot, admin_update, context, store):
+        store.add_child("Alex")  # Need a child so help shows full command list
         await bot._cmd_help(admin_update, context)
         admin_update.effective_message.reply_text.assert_called_once()
         msg = admin_update.effective_message.reply_text.call_args[0][0]
@@ -261,7 +262,7 @@ class TestAddKidCommand:
     async def test_addkid_success(self, bot, admin_update, context, store):
         context.args = ["Alex"]
         await bot._cmd_addkid(admin_update, context)
-        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        msg = admin_update.effective_message.reply_text.call_args_list[0][0][0]
         assert "Alex" in msg
         assert "profile created" in msg
         assert store.get_child_by_name("Alex") is not None
@@ -1365,7 +1366,7 @@ class TestChildCommand:
         context.args = ["add", "Alex"]
         await bot._cmd_child(admin_update, context)
         assert store.get_child_by_name("Alex") is not None
-        text = admin_update.effective_message.reply_text.call_args[0][0]
+        text = admin_update.effective_message.reply_text.call_args_list[0][0][0]
         assert "Alex" in text
         assert "created" in text
 
@@ -1568,6 +1569,87 @@ class TestStarterChannelsBot:
         await bot._cmd_channel(admin_update, context)
         text = admin_update.effective_message.reply_text.call_args[0][0]
         assert "Starter Channels" in text
+
+
+# ── Starter Channel Auto-Prompt (#40) ─────────────────────────────
+
+class TestStarterAutoPrompt:
+    """Tests for auto-prompting starter channels after child creation (#40)."""
+
+    @pytest.mark.asyncio
+    async def test_addkid_zero_channels_triggers_starter_prompt(self, bot, admin_update, context, store):
+        """Creating a child with zero channels triggers the starter prompt."""
+        context.args = ["Alex"]
+        await bot._cmd_addkid(admin_update, context)
+        # Should have two reply_text calls: profile created + starter prompt
+        calls = admin_update.effective_message.reply_text.call_args_list
+        assert len(calls) == 2
+        prompt_text = calls[1][0][0]
+        assert "kid-friendly channels" in prompt_text
+        assert "Alex" in prompt_text
+        # Check inline button present
+        prompt_kwargs = calls[1][1]
+        keyboard = prompt_kwargs["reply_markup"]
+        assert "starter_page" in keyboard.inline_keyboard[0][0].callback_data
+
+    @pytest.mark.asyncio
+    async def test_addkid_existing_channels_skips_prompt(self, bot, admin_update, context, store):
+        """Creating a child when channels already exist does not trigger prompt."""
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "SomeChannel", "allowed", handle="@somechannel")
+        store.remove_child(child["id"])
+        # Now create via /addkid — we need to pre-add channels after creation
+        # Instead, test via _maybe_prompt_starter_channels directly
+        child2 = store.add_child("Alex")
+        store.add_channel(child2["id"], "SomeChannel", "allowed", handle="@somechannel")
+        msg = AsyncMock()
+        msg.reply_text = AsyncMock()
+        await bot._maybe_prompt_starter_channels(msg, child2["id"], "Alex")
+        msg.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_starter_prompt_not_repeated(self, bot, admin_update, context, store):
+        """Prompt is not repeated on subsequent interactions."""
+        context.args = ["Alex"]
+        await bot._cmd_addkid(admin_update, context)
+        child = store.get_child_by_name("Alex")
+        # Prompt was sent — flag should be set
+        assert store.get_child_setting(child["id"], "starter_prompted") == "1"
+        # Call again directly — should not send
+        msg = AsyncMock()
+        msg.reply_text = AsyncMock()
+        await bot._maybe_prompt_starter_channels(msg, child["id"], "Alex")
+        msg.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_child_add_subcommand_triggers_starter_prompt(self, bot, admin_update, context, store):
+        """Creating a child via /child add also triggers the starter prompt."""
+        context.args = ["add", "Sam"]
+        await bot._cmd_child(admin_update, context)
+        calls = admin_update.effective_message.reply_text.call_args_list
+        assert len(calls) == 2
+        prompt_text = calls[1][0][0]
+        assert "kid-friendly channels" in prompt_text
+        assert "Sam" in prompt_text
+
+    @pytest.mark.asyncio
+    async def test_start_no_children_suggests_addkid(self, bot, admin_update, context):
+        """On first interaction with no children, /start suggests /addkid."""
+        context.args = []
+        await bot._cmd_help(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "/addkid" in msg
+        assert "don't have any child profiles" in msg
+
+    @pytest.mark.asyncio
+    async def test_start_with_children_shows_help(self, bot, admin_update, context, store):
+        """/start with existing children shows normal help text."""
+        store.add_child("Alex")
+        context.args = []
+        await bot._cmd_help(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Bot Commands" in msg
+        assert "/addkid" not in msg or "/child add" in msg
 
 
 # ── Pending List Actions (#29) ────────────────────────────────────
