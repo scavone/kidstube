@@ -613,7 +613,7 @@ class TestChannelCommand:
         context.args = ["unallow", "TestCh"]
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
-        assert "removed" in msg
+        assert "Removed" in msg
         assert not store.is_channel_allowed(child["id"], "TestCh")
 
     @pytest.mark.asyncio
@@ -623,7 +623,7 @@ class TestChannelCommand:
         context.args = ["unblock", "BadCh"]
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
-        assert "removed" in msg
+        assert "Removed" in msg
 
     @pytest.mark.asyncio
     async def test_channel_list_with_channels(self, bot, admin_update, context, store):
@@ -643,6 +643,114 @@ class TestChannelCommand:
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
         assert "Usage:" in msg
+
+    @pytest.mark.asyncio
+    async def test_channel_unallow_includes_video_count(self, bot, admin_update, context, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "TestCh", "allowed")
+        store.add_video("vid_a_12345", "Video A", "TestCh")
+        store.add_video("vid_b_12345", "Video B", "TestCh")
+        store.request_video(cid, "vid_a_12345")
+        store.request_video(cid, "vid_b_12345")
+        context.args = ["unallow", "TestCh"]
+        await bot._cmd_channel(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "2 associated video(s)" in msg
+
+    @pytest.mark.asyncio
+    async def test_channel_unallow_zero_videos(self, bot, admin_update, context, store):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "EmptyCh", "allowed")
+        context.args = ["unallow", "EmptyCh"]
+        await bot._cmd_channel(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "no associated videos" in msg
+
+    @pytest.mark.asyncio
+    async def test_channel_list_renders_delete_buttons(self, bot, admin_update, context, store):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Allowed1", "allowed")
+        store.add_channel(child["id"], "Blocked1", "blocked")
+        context.args = []
+        await bot._cmd_channel(admin_update, context)
+        # Check that reply_markup has delete buttons
+        call_kwargs = admin_update.effective_message.reply_text.call_args[1]
+        keyboard = call_kwargs["reply_markup"]
+        # Flatten all button callback_data values
+        all_data = [btn.callback_data for row in keyboard.inline_keyboard for btn in row]
+        assert any("chan_del:" in d for d in all_data)
+        # Each channel should have a delete button
+        assert any("Allowed1" in d for d in all_data)
+        assert any("Blocked1" in d for d in all_data)
+
+
+# ── Channel Delete Callback ──────────────────────────────────────
+
+class TestChannelDeleteCallback:
+    def _make_callback_update(self, data: str):
+        update = MagicMock()
+        update.effective_chat.id = 12345
+        update.effective_user.id = 12345
+        update.callback_query = AsyncMock()
+        update.callback_query.data = data
+        update.callback_query.answer = AsyncMock()
+        update.callback_query.message = AsyncMock()
+        return update
+
+    @pytest.mark.asyncio
+    async def test_chan_del_shows_confirmation(self, bot, store, context):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "TestCh", "allowed")
+        store.add_video("vid_a_12345", "Video A", "TestCh")
+        store.request_video(cid, "vid_a_12345")
+
+        update = self._make_callback_update(f"chan_del:{cid}:0:TestCh")
+        await bot._handle_callback(update, context)
+
+        # Should show confirmation with video count
+        msg = update.callback_query.message.edit_text.call_args
+        text = msg[0][0]
+        assert "Remove" in text
+        assert "TestCh" in text
+        assert "1" in text  # 1 associated video
+        # Should have Yes/Cancel buttons
+        keyboard = msg[1]["reply_markup"]
+        all_data = [btn.callback_data for row in keyboard.inline_keyboard for btn in row]
+        assert any("chan_del_yes:" in d for d in all_data)
+        assert any("chan_del_no:" in d for d in all_data)
+
+    @pytest.mark.asyncio
+    async def test_chan_del_yes_removes_and_refreshes(self, bot, store, context):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "TestCh", "allowed")
+        store.add_video("vid_a_12345", "Video A", "TestCh")
+        store.request_video(cid, "vid_a_12345")
+
+        update = self._make_callback_update(f"chan_del_yes:{cid}:0:TestCh")
+        await bot._handle_callback(update, context)
+
+        # Channel should be removed
+        assert not store.is_channel_allowed(cid, "TestCh")
+        # Should have answered with removal info
+        update.callback_query.answer.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_chan_del_no_returns_to_list(self, bot, store, context):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "TestCh", "allowed")
+
+        update = self._make_callback_update(f"chan_del_no:{cid}:0")
+        await bot._handle_callback(update, context)
+
+        # Channel should still exist
+        assert store.is_channel_allowed(cid, "TestCh")
+        # Should have refreshed the channel list view
+        msg_text = update.callback_query.message.edit_text.call_args[0][0]
+        assert "Allowed Channels" in msg_text
 
 
 # ── /time Command ─────────────────────────────────────────────────

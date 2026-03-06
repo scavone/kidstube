@@ -706,11 +706,14 @@ class VideoStore:
                              channel_id=channel_id, handle=handle, category=category)
         return True
 
-    def remove_channel(self, child_id: int, name_or_handle: str) -> bool:
+    def remove_channel(self, child_id: int, name_or_handle: str) -> tuple[bool, int]:
         """Remove a channel from a child's list by name or @handle.
 
         Also revokes (deletes) all video access entries for that channel's
         videos so they no longer appear in the child's catalog.
+
+        Returns (success, video_count) where video_count is the number of
+        deleted video access rows.
         """
         with self._lock:
             # Look up the channel_name before deleting
@@ -721,12 +724,12 @@ class VideoStore:
                 (child_id, name_or_handle, name_or_handle),
             ).fetchone()
             if not row:
-                return False
+                return (False, 0)
 
             channel_name = row[0]
 
             # Remove video access entries for this channel's videos
-            self.conn.execute(
+            cursor = self.conn.execute(
                 """DELETE FROM child_video_access
                    WHERE child_id = ?
                      AND video_id IN (
@@ -735,6 +738,7 @@ class VideoStore:
                      )""",
                 (child_id, channel_name),
             )
+            video_count = cursor.rowcount
 
             # Remove the channel entry
             self.conn.execute(
@@ -743,7 +747,21 @@ class VideoStore:
                 (child_id, channel_name),
             )
             self.conn.commit()
-            return True
+            return (True, video_count)
+
+    def count_channel_videos(self, child_id: int, channel_name: str) -> int:
+        """Count video access entries for a channel for a given child."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) FROM child_video_access
+                   WHERE child_id = ?
+                     AND video_id IN (
+                         SELECT video_id FROM videos
+                         WHERE channel_name = ? COLLATE NOCASE
+                     )""",
+                (child_id, channel_name),
+            ).fetchone()
+            return row[0] if row else 0
 
     def get_channels(self, child_id: int, status: Optional[str] = None) -> list[dict]:
         """List channels for a child, optionally filtered by status."""

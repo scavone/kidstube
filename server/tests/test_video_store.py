@@ -439,8 +439,42 @@ class TestChannels:
         child = store.add_child("Alex")
         cid = child["id"]
         store.add_channel(cid, "Test Channel", "allowed")
-        assert store.remove_channel(cid, "Test Channel")
+        success, count = store.remove_channel(cid, "Test Channel")
+        assert success
+        assert count == 0
         assert not store.is_channel_allowed(cid, "Test Channel")
+
+    def test_remove_channel_returns_video_count(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Good Channel", "allowed")
+        # Add videos belonging to this channel and create access records
+        store.add_video("vid_a_12345", "Video A", "Good Channel")
+        store.add_video("vid_b_12345", "Video B", "Good Channel")
+        store.add_video("vid_c_12345", "Video C", "Other Channel")
+        store.request_video(cid, "vid_a_12345")
+        store.request_video(cid, "vid_b_12345")
+        store.request_video(cid, "vid_c_12345")
+        success, count = store.remove_channel(cid, "Good Channel")
+        assert success
+        assert count == 2  # only vid_a and vid_b belong to Good Channel
+
+    def test_remove_channel_not_found(self, store):
+        child = store.add_child("Alex")
+        success, count = store.remove_channel(child["id"], "Nonexistent")
+        assert not success
+        assert count == 0
+
+    def test_count_channel_videos(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "TestCh", "allowed")
+        store.add_video("vid_x_12345", "Video X", "TestCh")
+        store.add_video("vid_y_12345", "Video Y", "TestCh")
+        store.request_video(cid, "vid_x_12345")
+        store.request_video(cid, "vid_y_12345")
+        assert store.count_channel_videos(cid, "TestCh") == 2
+        assert store.count_channel_videos(cid, "OtherCh") == 0
 
     def test_blocked_channels_set(self, store):
         child = store.add_child("Alex")

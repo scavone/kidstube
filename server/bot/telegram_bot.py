@@ -261,6 +261,41 @@ class TelegramBot:
             page = int(parts[2])
             await self._show_channel_page(query.message, child_id, page)
             return
+        # Channel delete request: chan_del:child_id:page:channel_name
+        if action == "chan_del" and len(parts) >= 4:
+            child_id = int(parts[1])
+            page = int(parts[2])
+            ch_name = ":".join(parts[3:])
+            video_count = self.video_store.count_channel_videos(child_id, ch_name)
+            child = self.video_store.get_child(child_id)
+            child_name = child["name"] if child else f"Child#{child_id}"
+            vid_info = f" and <b>{video_count}</b> associated video(s)" if video_count else " (no associated videos)"
+            text = f"Remove <b>{_esc(ch_name)}</b>{vid_info} from {_esc(child_name)}'s library?"
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Yes, remove", callback_data=f"chan_del_yes:{child_id}:{page}:{ch_name}"),
+                InlineKeyboardButton("Cancel", callback_data=f"chan_del_no:{child_id}:{page}"),
+            ]])
+            await self._send_or_edit(query.message, text, keyboard=keyboard)
+            return
+        # Channel delete confirm: chan_del_yes:child_id:page:channel_name
+        if action == "chan_del_yes" and len(parts) >= 4:
+            child_id = int(parts[1])
+            page = int(parts[2])
+            ch_name = ":".join(parts[3:])
+            success, video_count = self.video_store.remove_channel(child_id, ch_name)
+            child = self.video_store.get_child(child_id)
+            child_name = child["name"] if child else f"Child#{child_id}"
+            if success:
+                vid_info = f" and {video_count} associated video(s)" if video_count else " (no associated videos)"
+                await query.answer(f"Removed {ch_name}{vid_info}")
+            await self._show_channel_page(query.message, child_id, page)
+            return
+        # Channel delete cancel: chan_del_no:child_id:page
+        if action == "chan_del_no" and len(parts) >= 3:
+            child_id = int(parts[1])
+            page = int(parts[2])
+            await self._show_channel_page(query.message, child_id, page)
+            return
         # Starter channel pagination: starter_page:child_id:page
         if action == "starter_page" and len(parts) >= 3:
             child_id = int(parts[1])
@@ -1000,9 +1035,11 @@ class TelegramBot:
         # /channel [ChildName] unallow <name>
         elif subcmd == "unallow" and len(sub_args) >= 2:
             name = " ".join(sub_args[1:])
-            if self.video_store.remove_channel(child_id, name):
+            success, video_count = self.video_store.remove_channel(child_id, name)
+            if success:
+                vid_info = f" and {video_count} associated video(s)" if video_count else " (no associated videos)"
                 await update.effective_message.reply_text(
-                    f"Channel <b>{_esc(name)}</b> removed from {_esc(child_name)}'s allow list.",
+                    f"Removed <b>{_esc(name)}</b>{vid_info} from {_esc(child_name)}'s library.",
                     parse_mode=ParseMode.HTML,
                 )
             else:
@@ -1011,9 +1048,11 @@ class TelegramBot:
         # /channel [ChildName] unblock <name>
         elif subcmd == "unblock" and len(sub_args) >= 2:
             name = " ".join(sub_args[1:])
-            if self.video_store.remove_channel(child_id, name):
+            success, video_count = self.video_store.remove_channel(child_id, name)
+            if success:
+                vid_info = f" and {video_count} associated video(s)" if video_count else " (no associated videos)"
                 await update.effective_message.reply_text(
-                    f"Channel <b>{_esc(name)}</b> removed from {_esc(child_name)}'s block list.",
+                    f"Removed <b>{_esc(name)}</b>{vid_info} from {_esc(child_name)}'s block list.",
                     parse_mode=ParseMode.HTML,
                 )
             else:
@@ -1043,27 +1082,40 @@ class TelegramBot:
             return
 
         lines = []
+        rows = []  # button rows: one ❌ per channel
         if allowed:
             lines.append(f"<b>Allowed Channels for {_esc(child_name)} ({len(allowed)})</b>")
             start = page * _CHANNEL_PAGE_SIZE
             for ch in allowed[start:start + _CHANNEL_PAGE_SIZE]:
                 cat = ch.get("category", "")
                 cat_tag = f" [{cat}]" if cat else ""
-                lines.append(f"  + {_esc(ch['channel_name'])}{cat_tag}")
+                ch_name = ch["channel_name"]
+                lines.append(f"  + {_esc(ch_name)}{cat_tag}")
+                rows.append([InlineKeyboardButton(
+                    f"❌ {ch_name}",
+                    callback_data=f"chan_del:{child_id}:{page}:{ch_name}",
+                )])
 
         if blocked:
             lines.append(f"\n<b>Blocked Channels for {_esc(child_name)} ({len(blocked)})</b>")
             for ch in blocked[:_CHANNEL_PAGE_SIZE]:
-                lines.append(f"  - {_esc(ch['channel_name'])}")
+                ch_name = ch["channel_name"]
+                lines.append(f"  - {_esc(ch_name)}")
+                rows.append([InlineKeyboardButton(
+                    f"❌ {ch_name}",
+                    callback_data=f"chan_del:{child_id}:{page}:{ch_name}",
+                )])
 
         total = len(allowed)  # paginate allowed only
-        buttons = []
+        nav_buttons = []
         if page > 0:
-            buttons.append(InlineKeyboardButton("< Prev", callback_data=f"chan_page:{child_id}:{page - 1}"))
+            nav_buttons.append(InlineKeyboardButton("< Prev", callback_data=f"chan_page:{child_id}:{page - 1}"))
         if (page + 1) * _CHANNEL_PAGE_SIZE < total:
-            buttons.append(InlineKeyboardButton("Next >", callback_data=f"chan_page:{child_id}:{page + 1}"))
+            nav_buttons.append(InlineKeyboardButton("Next >", callback_data=f"chan_page:{child_id}:{page + 1}"))
+        if nav_buttons:
+            rows.append(nav_buttons)
 
-        keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+        keyboard = InlineKeyboardMarkup(rows) if rows else None
         text = "\n".join(lines)
         await self._send_or_edit(message, text, keyboard=keyboard, edit=edit)
 
