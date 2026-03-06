@@ -290,6 +290,18 @@ cd tvos
 swift test
 ```
 
+## Troubleshooting
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for solutions to common issues including:
+
+- Invidious won't start or health checks failing
+- Telegram bot not responding (token/chat ID issues)
+- Videos won't play (HLS/ffmpeg, stream URL expiry)
+- tvOS app can't connect to server (network, API key mismatch)
+- How to check logs (Docker Compose, server stdout)
+- Database backup and restore (SQLite location, WAL mode)
+- Common Invidious issues (rate limiting, Companion errors)
+
 ## Architecture Notes
 
 - **Invidious stream URLs expire** after a few hours. The `/api/stream` endpoint fetches a fresh URL on every request.
