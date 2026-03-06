@@ -27,6 +27,11 @@ class UpdateChildBody(BaseModel):
     avatar: Optional[str] = Field(default=None, max_length=10)
 
 
+class ImportStarterChannelsBody(BaseModel):
+    handles: list[str] = Field(..., min_length=1)
+    child_id: int = Field(..., gt=0)
+
+
 # ── Responses ───────────────────────────────────────────────────────
 
 class ChildProfileResponse(BaseModel):

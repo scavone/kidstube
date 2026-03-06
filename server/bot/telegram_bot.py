@@ -8,9 +8,11 @@ Commands accept optional child name; default to only child if single.
 import asyncio
 import logging
 from io import BytesIO
+from pathlib import Path
 from typing import Optional, Callable, Awaitable
 
 import httpx
+import yaml
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -38,6 +40,7 @@ logger = logging.getLogger(__name__)
 _PENDING_PAGE_SIZE = 5
 _APPROVED_PAGE_SIZE = 10
 _CHANNEL_PAGE_SIZE = 10
+_STARTER_PAGE_SIZE = 10
 
 # Thumbnail domain whitelist
 _THUMB_HOSTS = {"i.ytimg.com", "i9.ytimg.com", "img.youtube.com"}
@@ -93,6 +96,7 @@ class TelegramBot:
         handlers = [
             CommandHandler(["start", "help"], self._cmd_help),
             CommandHandler("kids", self._cmd_kids),
+            CommandHandler("child", self._cmd_child),
             CommandHandler("addkid", self._cmd_addkid),
             CommandHandler("editkid", self._cmd_editkid),
             CommandHandler("removekid", self._cmd_removekid),
@@ -256,6 +260,20 @@ class TelegramBot:
             page = int(parts[2])
             await self._show_channel_page(query.message, child_id, page)
             return
+        # Starter channel pagination: starter_page:child_id:page
+        if action == "starter_page" and len(parts) >= 3:
+            child_id = int(parts[1])
+            page = int(parts[2])
+            await self._show_starter_page(query.message, child_id, page)
+            return
+
+        # Starter channel import: starter_import:child_id:handle
+        if action == "starter_import" and len(parts) >= 3:
+            child_id = int(parts[1])
+            handle = ":".join(parts[2:])
+            await self._import_starter_channel(query, child_id, handle)
+            return
+
         # Revoke from approved list: rev:child_id:page:video_id
         if action == "rev" and len(parts) >= 4:
             child_id = int(parts[1])
@@ -380,18 +398,22 @@ class TelegramBot:
         app_name = self.config.app_name
         text = (
             f"<b>{_esc(app_name)} Bot Commands</b>\n\n"
-            "/kids — List child profiles\n"
-            "/addkid Name [Avatar] — Add a child profile\n"
-            "/editkid Name [NewName] [NewAvatar] — Edit name/avatar\n"
-            "/removekid Name — Remove a child profile\n"
+            "<b>Children</b>\n"
+            "/child — List all profiles with summary\n"
+            "/child add Name [Avatar] — Add a child profile\n"
+            "/child remove Name — Delete a profile\n"
+            "/child rename Old New — Rename a profile\n"
+            "/child Name — Show single profile details\n\n"
+            "<b>Content</b>\n"
             "/pending — View pending video requests\n"
             "/approved [ChildName] — Approved videos\n"
-            "/stats [ChildName] — Video statistics\n"
-            "/channel [ChildName] — Manage channel allow/block lists\n"
-            "/time [ChildName] — View/set time limits\n"
-            "/watch [ChildName] — Watch activity today\n"
-            "/search — Manage word filters\n"
-            "/help — Show this message\n\n"
+            "/channel [ChildName] — Manage channel lists\n"
+            "/channel [ChildName] starter — Browse starter channels\n"
+            "/search — Manage word filters\n\n"
+            "<b>Activity</b>\n"
+            "/stats [ChildName] — Video statistics (combined if omitted)\n"
+            "/watch [ChildName] — Watch activity (combined if omitted)\n"
+            "/time [ChildName] — View/set time limits\n\n"
             "<i>Child name can be omitted if only one child exists.</i>\n"
             "<i>Send a photo with caption \"avatar ChildName\" to set a photo avatar.</i>"
         )
@@ -436,6 +458,125 @@ class TelegramBot:
                 f"  Remaining: {remaining:.0f} min"
                 + (f" | Pending: {pending_count}" if pending_count > 0 else "")
             )
+
+        await update.effective_message.reply_text(
+            "\n".join(lines), parse_mode=ParseMode.HTML
+        )
+
+    async def _cmd_child(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Combined child management command.
+
+        /child — list all profiles with summary
+        /child add <name> [pin] — create profile
+        /child remove <name> — delete profile
+        /child rename <old> <new> — rename profile
+        /child <name> — show single child profile summary
+        """
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+
+        # /child (no args) — same as /kids
+        if not args:
+            await self._cmd_kids(update, context)
+            return
+
+        subcmd = args[0].lower()
+
+        # /child add <name> [avatar]
+        if subcmd == "add":
+            if len(args) < 2:
+                await update.effective_message.reply_text("Usage: /child add Name [Avatar]")
+                return
+            name = args[1]
+            avatar = args[2] if len(args) > 2 else "\U0001f466"
+            child = self.video_store.add_child(name, avatar)
+            if not child:
+                await update.effective_message.reply_text(f"A child named '{name}' already exists.")
+                return
+            default_limit = self.config.watch_limits.daily_limit_minutes
+            self.video_store.set_child_setting(child["id"], "daily_limit_minutes", str(default_limit))
+            await update.effective_message.reply_text(
+                f"{avatar} <b>{_esc(name)}</b> profile created!\nDaily limit: {default_limit} minutes",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        # /child remove <name>
+        if subcmd == "remove":
+            if len(args) < 2:
+                await update.effective_message.reply_text("Usage: /child remove Name")
+                return
+            name = args[1]
+            child = self.video_store.get_child_by_name(name)
+            if not child:
+                await update.effective_message.reply_text(f"Child '{name}' not found.")
+                return
+            self.video_store.delete_avatar(child["id"])
+            self.video_store.remove_child(child["id"])
+            await update.effective_message.reply_text(
+                f"{child.get('avatar', '')} <b>{_esc(child['name'])}</b> has been removed.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        # /child rename <old> <new>
+        if subcmd == "rename":
+            if len(args) < 3:
+                await update.effective_message.reply_text("Usage: /child rename OldName NewName")
+                return
+            old_name = args[1]
+            new_name = args[2]
+            child = self.video_store.get_child_by_name(old_name)
+            if not child:
+                await update.effective_message.reply_text(f"Child '{old_name}' not found.")
+                return
+            updated = self.video_store.update_child(child["id"], name=new_name)
+            if not updated:
+                await update.effective_message.reply_text(f"Failed. A child named '{new_name}' may already exist.")
+                return
+            await update.effective_message.reply_text(
+                f"Renamed <b>{_esc(old_name)}</b> to <b>{_esc(new_name)}</b>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        # /child <Name> — show single child summary
+        child = self.video_store.get_child_by_name(args[0])
+        if not child:
+            await update.effective_message.reply_text(
+                f"Child '{args[0]}' not found.\n\n"
+                "Usage:\n"
+                "/child \u2014 List all profiles\n"
+                "/child add Name [Avatar]\n"
+                "/child remove Name\n"
+                "/child rename OldName NewName\n"
+                "/child ChildName \u2014 Show profile summary"
+            )
+            return
+
+        # Show detailed single-child summary
+        cid = child["id"]
+        tz = self.config.watch_limits.timezone
+        today = get_today_str(tz)
+        bounds = get_day_utc_bounds(today, tz)
+
+        limit_str = self.video_store.get_child_setting(cid, "daily_limit_minutes", "")
+        limit = int(limit_str) if limit_str else self.config.watch_limits.daily_limit_minutes
+        used = self.video_store.get_daily_watch_minutes(cid, today, utc_bounds=bounds)
+        remaining = max(0, limit - used)
+        stats = self.video_store.get_stats(child_id=cid)
+        channels = self.video_store.get_channels(cid, status="allowed")
+        bar = _progress_bar(used / limit if limit > 0 else 0)
+
+        lines = [
+            f"{child.get('avatar', '')} <b>{_esc(child['name'])}</b>\n",
+            f"<b>Time Today:</b> {used:.0f}/{limit} min {bar}",
+            f"Remaining: {remaining:.0f} min\n",
+            f"<b>Videos:</b> {stats['approved']} approved, {stats['pending']} pending, {stats['denied']} denied",
+            f"<b>Channels:</b> {len(channels)} allowed",
+        ]
 
         await update.effective_message.reply_text(
             "\n".join(lines), parse_mode=ParseMode.HTML
@@ -722,17 +863,50 @@ class TelegramBot:
                 return
             stats = self.video_store.get_stats(child_id=child["id"])
             header = f"Stats for {_esc(child['name'])}"
+            text = (
+                f"<b>{header}</b>\n\n"
+                f"Total requests: {stats['total']}\n"
+                f"Approved: {stats['approved']}\n"
+                f"Denied: {stats['denied']}\n"
+                f"Pending: {stats['pending']}"
+            )
         else:
-            stats = self.video_store.get_stats()
-            header = "Overall Stats"
+            children = self._all_children()
+            if len(children) > 1:
+                # Combined summary across all children
+                tz = self.config.watch_limits.timezone
+                today = get_today_str(tz)
+                bounds = get_day_utc_bounds(today, tz)
 
-        text = (
-            f"<b>{header}</b>\n\n"
-            f"Total requests: {stats['total']}\n"
-            f"Approved: {stats['approved']}\n"
-            f"Denied: {stats['denied']}\n"
-            f"Pending: {stats['pending']}"
-        )
+                lines = ["<b>Stats \u2014 All Children</b>\n"]
+                for child in children:
+                    cid = child["id"]
+                    s = self.video_store.get_stats(child_id=cid)
+                    used = self.video_store.get_daily_watch_minutes(cid, today, utc_bounds=bounds)
+                    limit_str = self.video_store.get_child_setting(cid, "daily_limit_minutes", "")
+                    limit = int(limit_str) if limit_str else self.config.watch_limits.daily_limit_minutes
+                    bar = _progress_bar(used / limit if limit > 0 else 0)
+
+                    lines.append(
+                        f"{child.get('avatar', '')} <b>{_esc(child['name'])}</b>\n"
+                        f"  Videos: {s['approved']} approved, {s['pending']} pending\n"
+                        f"  Today: {used:.0f}/{limit} min {bar}"
+                    )
+
+                overall = self.video_store.get_stats()
+                lines.append(f"\n<b>Overall:</b> {overall['total']} total, {overall['approved']} approved, {overall['pending']} pending")
+                text = "\n".join(lines)
+            else:
+                stats = self.video_store.get_stats()
+                header = "Overall Stats"
+                text = (
+                    f"<b>{header}</b>\n\n"
+                    f"Total requests: {stats['total']}\n"
+                    f"Approved: {stats['approved']}\n"
+                    f"Denied: {stats['denied']}\n"
+                    f"Pending: {stats['pending']}"
+                )
+
         await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
 
     async def _cmd_channel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -767,6 +941,11 @@ class TelegramBot:
             return
 
         subcmd = sub_args[0].lower()
+
+        # /channel [ChildName] starter — browse starter channels
+        if subcmd == "starter":
+            await self._show_starter_page(update.effective_message, child_id, page=0, edit=False)
+            return
 
         # /channel [ChildName] allow <name> [category]
         if subcmd == "allow" and len(sub_args) >= 2:
@@ -862,6 +1041,117 @@ class TelegramBot:
         keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
         text = "\n".join(lines)
         await self._send_or_edit(message, text, keyboard=keyboard, edit=edit)
+
+    def _load_starter_channels(self) -> dict:
+        """Load starter channels from bundled YAML."""
+        yaml_path = Path(__file__).resolve().parent.parent / "starter_channels.yaml"
+        if not yaml_path.exists():
+            return {}
+        with open(yaml_path) as f:
+            return yaml.safe_load(f) or {}
+
+    async def _show_starter_page(self, message, child_id: int, page: int = 0, edit: bool = True):
+        """Display paginated starter channels with import buttons."""
+        child = self.video_store.get_child(child_id)
+        child_name = child["name"] if child else f"Child#{child_id}"
+
+        data = self._load_starter_channels()
+        if not data:
+            await self._send_or_edit(message, "No starter channels available.", edit=edit)
+            return
+
+        # Flatten all channels with category labels
+        all_channels = []
+        for category, channels_list in data.items():
+            for ch in channels_list:
+                all_channels.append({**ch, "category_key": category})
+
+        # Get already-imported handles for this child
+        existing = self.video_store.get_channels(child_id)
+        imported_handles = {ch.get("handle", "").lower() for ch in existing if ch.get("handle")}
+
+        total = len(all_channels)
+        start = page * _STARTER_PAGE_SIZE
+        page_items = all_channels[start:start + _STARTER_PAGE_SIZE]
+
+        lines = [f"<b>Starter Channels for {_esc(child_name)}</b> ({start + 1}-{min(start + len(page_items), total)} of {total})\n"]
+
+        buttons = []
+        for ch in page_items:
+            handle = ch.get("handle", "")
+            name = ch.get("name", handle)
+            cat = ch.get("category_key", "")
+            age = ch.get("age_range", "")
+            desc = ch.get("description", "")
+            is_imported = handle.lower() in imported_handles
+
+            mark = "\u2705 " if is_imported else ""
+            lines.append(f"{mark}<b>{_esc(name)}</b> [{cat}]")
+            if age:
+                lines.append(f"  Ages {age}")
+            if desc:
+                lines.append(f"  <i>{_esc(desc)}</i>")
+            lines.append("")
+
+            if not is_imported:
+                buttons.append([InlineKeyboardButton(
+                    f"Import {name}",
+                    callback_data=f"starter_import:{child_id}:{handle}",
+                )])
+
+        # Pagination nav
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("\u25c0 Back", callback_data=f"starter_page:{child_id}:{page - 1}"))
+        if start + _STARTER_PAGE_SIZE < total:
+            nav.append(InlineKeyboardButton("Next \u25b6", callback_data=f"starter_page:{child_id}:{page + 1}"))
+        if nav:
+            buttons.append(nav)
+
+        keyboard = InlineKeyboardMarkup(buttons) if buttons else None
+        text = "\n".join(lines)
+        await self._send_or_edit(message, text, keyboard=keyboard, edit=edit)
+
+    async def _import_starter_channel(self, query, child_id: int, handle: str):
+        """Import a single starter channel for a child."""
+        data = self._load_starter_channels()
+
+        # Find the channel info
+        info = None
+        for category, channels_list in data.items():
+            for ch in channels_list:
+                if ch.get("handle", "").lower() == handle.lower():
+                    info = {**ch, "category_key": category}
+                    break
+            if info:
+                break
+
+        if not info:
+            await query.answer("Channel not found in starter list.")
+            return
+
+        cat_key = info.get("category_key", "fun")
+        category = "edu" if cat_key in ("educational", "science") else "fun"
+        name = info.get("name", handle)
+
+        self.video_store.add_channel(
+            child_id, name, "allowed",
+            handle=info.get("handle"),
+            category=category,
+        )
+
+        await query.answer(f"Imported {name}!")
+
+        # Re-render the current page
+        # Determine which page this channel was on
+        all_channels = []
+        for cat, cl in data.items():
+            for c in cl:
+                all_channels.append(c)
+
+        idx = next((i for i, c in enumerate(all_channels) if c.get("handle", "").lower() == handle.lower()), 0)
+        page = idx // _STARTER_PAGE_SIZE
+        await self._show_starter_page(query.message, child_id, page)
 
     async def _cmd_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_admin(update):
@@ -1032,8 +1322,6 @@ class TelegramBot:
         child = self._resolve_child(child_name)
 
         if child_name and not child:
-            # Maybe the arg is a child name that doesn't exist
-            # Try treating it as not a child name (only child, arg is something else)
             children = self._all_children()
             if len(children) == 1:
                 child = children[0]
@@ -1047,9 +1335,34 @@ class TelegramBot:
                 await update.effective_message.reply_text("No child profiles yet.")
                 return
             if len(children) > 1:
-                names = ", ".join(c["name"] for c in children)
+                # Combined watch activity for all children
+                tz = self.config.watch_limits.timezone
+                today = get_today_str(tz)
+                bounds = get_day_utc_bounds(today, tz)
+
+                lines = ["<b>Watch Activity \u2014 All Children (Today)</b>\n"]
+                any_activity = False
+                for c in children:
+                    breakdown = self.video_store.get_daily_watch_breakdown(c["id"], today, utc_bounds=bounds)
+                    total_min = sum(v["minutes"] for v in breakdown)
+                    lines.append(f"{c.get('avatar', '')} <b>{_esc(c['name'])}</b>: {total_min:.1f} min")
+                    if breakdown:
+                        any_activity = True
+                        for v in breakdown[:3]:  # Top 3 videos per child
+                            title = v.get("title", v.get("video_id", "?"))
+                            lines.append(f"  \u2022 {_esc(title)} \u2014 {v['minutes']:.1f} min")
+                        if len(breakdown) > 3:
+                            lines.append(f"  <i>...and {len(breakdown) - 3} more</i>")
+                    else:
+                        lines.append("  <i>No activity</i>")
+                    lines.append("")
+
+                if not any_activity:
+                    await update.effective_message.reply_text("No watch activity today.")
+                    return
+
                 await update.effective_message.reply_text(
-                    f"Specify a child: /watch [Name]\nChildren: {names}"
+                    "\n".join(lines), parse_mode=ParseMode.HTML
                 )
                 return
             child = children[0]
@@ -1068,14 +1381,14 @@ class TelegramBot:
             )
             return
 
-        lines = [f"<b>Watch Activity — {_esc(child['name'])} (Today)</b>\n"]
+        lines = [f"<b>Watch Activity \u2014 {_esc(child['name'])} (Today)</b>\n"]
         lines.append(f"Total: {total_min:.1f} min\n")
 
         for v in breakdown:
             title = v.get("title", v.get("video_id", "?"))
             mins = v["minutes"]
             channel = v.get("channel_name", "?")
-            lines.append(f"  <b>{_esc(title)}</b> — {mins:.1f} min\n  {_esc(channel)}")
+            lines.append(f"  <b>{_esc(title)}</b> \u2014 {mins:.1f} min\n  {_esc(channel)}")
 
         await update.effective_message.reply_text(
             "\n".join(lines), parse_mode=ParseMode.HTML

@@ -518,3 +518,160 @@ class TestChannelsEndpoint:
         assert resp.status_code == 200
         channels = resp.json()["channels"]
         assert len(channels) == 2  # Only allowed channels
+
+
+class TestFamilyFriendlyFilter:
+    """Tests for filtering isFamilyFriendly=false from search results (#17)."""
+
+    def test_filters_non_family_friendly(self, client, auth_headers, store, mock_invidious):
+        store.add_child("Alex")
+
+        mock_results = [
+            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": True},
+            {"video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": False},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results):
+            resp = client.get("/api/search?q=test&child_id=1", headers=auth_headers)
+
+        results = resp.json()["results"]
+        assert len(results) == 1
+        assert results[0]["video_id"] == "v1"
+
+    def test_keeps_videos_with_no_family_friendly_field(self, client, auth_headers, store, mock_invidious):
+        store.add_child("Alex")
+
+        mock_results = [
+            {"video_id": "v1", "title": "No field", "channel_name": "Ch", "channel_id": "UC1",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results):
+            resp = client.get("/api/search?q=test&child_id=1", headers=auth_headers)
+
+        results = resp.json()["results"]
+        assert len(results) == 1
+
+
+class TestNotificationDedup:
+    """Tests for notification dedup on video requests (#27)."""
+
+    def test_duplicate_request_does_not_notify_twice(self, client, auth_headers, store, mock_invidious):
+        store.add_child("Alex")
+        store.add_video("abc12345678", "Test Video", "Ch")
+
+        notify = AsyncMock()
+        api_routes.notify_callback = notify
+
+        # First request -> notification
+        resp = client.post(
+            "/api/request",
+            json={"video_id": "abc12345678", "child_id": 1},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert notify.call_count == 1
+
+        # Second request within dedup window -> no notification
+        # (request_video returns existing "pending", so notify is not triggered)
+        resp = client.post(
+            "/api/request",
+            json={"video_id": "abc12345678", "child_id": 1},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        # notify should still be 1 because request_video returns "pending" (existing row)
+        # and we only notify on status == "pending" from a NEW insert
+        assert notify.call_count == 1
+
+
+class TestStarterChannelsEndpoint:
+    """Tests for the starter channels onboarding endpoints (#13)."""
+
+    def test_get_starter_channels(self, client, auth_headers):
+        resp = client.get("/api/onboarding/starter-channels", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "categories" in data
+        categories = data["categories"]
+        assert "educational" in categories
+        assert "fun" in categories
+        assert "music" in categories
+        assert "science" in categories
+        # Check a known channel exists
+        edu_handles = [ch["handle"] for ch in categories["educational"]]
+        assert "@kurzgesagt" in edu_handles
+
+    def test_starter_channels_annotates_imported(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Kurzgesagt", "allowed", handle="@kurzgesagt")
+
+        resp = client.get(f"/api/onboarding/starter-channels?child_id={child['id']}", headers=auth_headers)
+        assert resp.status_code == 200
+        categories = resp.json()["categories"]
+
+        kurzgesagt = next(
+            ch for ch in categories["educational"]
+            if ch["handle"] == "@kurzgesagt"
+        )
+        assert kurzgesagt["imported"] is True
+
+    def test_import_starter_channels(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+
+        resp = client.post(
+            "/api/onboarding/import",
+            json={"handles": ["@kurzgesagt", "@MarkRober"], "child_id": child["id"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 2
+        assert "@kurzgesagt" in data["imported"]
+        assert "@MarkRober" in data["imported"]
+
+        # Verify channels were actually added
+        channels = store.get_channels(child["id"], status="allowed")
+        names = [ch["channel_name"] for ch in channels]
+        assert "Kurzgesagt \u2013 In a Nutshell" in names
+        assert "Mark Rober" in names
+
+    def test_import_invalid_handles_skipped(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+
+        resp = client.post(
+            "/api/onboarding/import",
+            json={"handles": ["@nonexistent_handle_xyz"], "child_id": child["id"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 0
+
+    def test_import_requires_child(self, client, auth_headers):
+        resp = client.post(
+            "/api/onboarding/import",
+            json={"handles": ["@kurzgesagt"], "child_id": 999},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_import_sets_correct_categories(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+
+        resp = client.post(
+            "/api/onboarding/import",
+            json={"handles": ["@kurzgesagt", "@BlueyTV", "@MarkRober"], "child_id": child["id"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        channels = store.get_channels(child["id"])
+        by_name = {ch["channel_name"]: ch for ch in channels}
+        assert by_name["Kurzgesagt \u2013 In a Nutshell"]["category"] == "edu"
+        assert by_name["Bluey"]["category"] == "fun"
+        assert by_name["Mark Rober"]["category"] == "edu"  # science -> edu

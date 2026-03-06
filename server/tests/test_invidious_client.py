@@ -304,3 +304,22 @@ class TestPickBestAdaptivePair:
         ]
         pair = client.pick_best_adaptive_pair(formats, preferred_lang="en")
         assert pair is not None
+
+
+class TestIsFamilyFriendly:
+    """Tests for isFamilyFriendly field in _normalize_video (#17)."""
+
+    def test_family_friendly_true(self, client):
+        raw = {"videoId": "abc123", "isFamilyFriendly": True}
+        result = client._normalize_video(raw)
+        assert result["is_family_friendly"] is True
+
+    def test_family_friendly_false(self, client):
+        raw = {"videoId": "abc123", "isFamilyFriendly": False}
+        result = client._normalize_video(raw)
+        assert result["is_family_friendly"] is False
+
+    def test_family_friendly_missing_defaults_true(self, client):
+        raw = {"videoId": "abc123"}
+        result = client._normalize_video(raw)
+        assert result["is_family_friendly"] is True

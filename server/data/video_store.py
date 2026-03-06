@@ -438,55 +438,60 @@ class VideoStore:
         """Request access to a video for a child.
 
         Returns the status: 'pending', 'approved', 'denied', or 'auto_approved'.
+
+        Uses INSERT OR IGNORE to be truly atomic — no race window between
+        a SELECT check and a subsequent INSERT.
         """
         with self._lock:
-            # Check if access already exists
-            row = self.conn.execute(
-                "SELECT status FROM child_video_access WHERE child_id = ? AND video_id = ?",
-                (child_id, video_id),
-            ).fetchone()
-            if row:
-                return row[0]
-
-            # Check per-child channel lists
+            # Determine desired status based on channel lists
             video = self.conn.execute(
                 "SELECT channel_name FROM videos WHERE video_id = ?", (video_id,)
             ).fetchone()
+
+            target_status = "pending"
+            decided_at = None
+
             if video:
                 blocked = self.conn.execute(
                     "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'blocked'",
                     (child_id, video["channel_name"]),
                 ).fetchone()
                 if blocked:
-                    self.conn.execute(
-                        """INSERT INTO child_video_access (child_id, video_id, status, decided_at)
-                           VALUES (?, ?, 'denied', datetime('now'))""",
-                        (child_id, video_id),
-                    )
-                    self.conn.commit()
-                    return "denied"
+                    target_status = "denied"
+                    decided_at = "datetime('now')"
+                else:
+                    allowed = self.conn.execute(
+                        "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
+                        (child_id, video["channel_name"]),
+                    ).fetchone()
+                    if allowed:
+                        target_status = "auto_approved"
+                        decided_at = "datetime('now')"
 
-                # Check if channel is allowed for this child -> auto-approve
-                allowed = self.conn.execute(
-                    "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
-                    (child_id, video["channel_name"]),
-                ).fetchone()
-                if allowed:
-                    self.conn.execute(
-                        """INSERT INTO child_video_access (child_id, video_id, status, decided_at)
-                           VALUES (?, ?, 'approved', datetime('now'))""",
-                        (child_id, video_id),
-                    )
-                    self.conn.commit()
-                    return "auto_approved"
-
-            # No list match -> pending
-            self.conn.execute(
-                "INSERT INTO child_video_access (child_id, video_id, status) VALUES (?, ?, 'pending')",
-                (child_id, video_id),
-            )
+            # Atomic insert — if the row already exists, nothing happens
+            if decided_at:
+                cursor = self.conn.execute(
+                    """INSERT OR IGNORE INTO child_video_access
+                       (child_id, video_id, status, decided_at)
+                       VALUES (?, ?, ?, datetime('now'))""",
+                    (child_id, video_id, "approved" if target_status == "auto_approved" else target_status),
+                )
+            else:
+                cursor = self.conn.execute(
+                    "INSERT OR IGNORE INTO child_video_access (child_id, video_id, status) VALUES (?, ?, ?)",
+                    (child_id, video_id, target_status),
+                )
             self.conn.commit()
-            return "pending"
+
+            if cursor.rowcount == 0:
+                # Row already existed — return existing status
+                row = self.conn.execute(
+                    "SELECT status FROM child_video_access WHERE child_id = ? AND video_id = ?",
+                    (child_id, video_id),
+                ).fetchone()
+                return row[0] if row else "pending"
+
+            return target_status
 
     def get_video_status(self, child_id: int, video_id: str) -> Optional[str]:
         """Get a child's access status for a video."""

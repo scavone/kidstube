@@ -13,6 +13,9 @@ import shutil
 import tempfile
 import time
 import uuid
+from pathlib import Path
+
+import yaml
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -23,6 +26,7 @@ from api.models import (
     HeartbeatBody,
     CreateChildBody,
     UpdateChildBody,
+    ImportStarterChannelsBody,
     HeartbeatResponse,
     VideoStatusResponse,
     StreamUrlResponse,
@@ -49,6 +53,10 @@ _last_heartbeat: dict[tuple[int, str], float] = {}
 _HEARTBEAT_MIN_INTERVAL = 10
 _HEARTBEAT_EVICT_AGE = 120
 _heartbeat_last_cleanup: float = 0.0
+
+# Notification dedup: (child_id, video_id) -> monotonic timestamp
+_last_notification: dict[tuple[int, str], float] = {}
+_NOTIFICATION_MIN_INTERVAL = 60  # seconds
 
 # Server-side ffmpeg HLS muxing for HQ adaptive streams
 _FFMPEG_PATH = shutil.which("ffmpeg")
@@ -169,6 +177,9 @@ async def search_videos(
 
     results = await invidious_client.search(q, max_results=config.invidious.search_max_results)
 
+    # Filter videos flagged as not family-friendly
+    results = [r for r in results if r.get("is_family_friendly", True) is not False]
+
     # Filter blocked channels (per-child)
     blocked = video_store.get_blocked_channels_set(child_id)
     if blocked:
@@ -236,9 +247,14 @@ async def request_video(body: VideoRequestBody):
 
     status = video_store.request_video(body.child_id, body.video_id)
 
-    # If pending, notify parent via Telegram
+    # If pending, notify parent via Telegram (with dedup)
     if status == "pending" and notify_callback:
-        await notify_callback(child, video)
+        notif_key = (body.child_id, body.video_id)
+        now = time.monotonic()
+        last_notif = _last_notification.get(notif_key, 0.0)
+        if now - last_notif >= _NOTIFICATION_MIN_INTERVAL:
+            _last_notification[notif_key] = now
+            await notify_callback(child, video)
 
     # Normalize auto_approved to approved for the client
     if status == "auto_approved":
@@ -437,6 +453,99 @@ async def list_channels(child_id: int = Query(..., gt=0)):
         raise HTTPException(status_code=404, detail="Child not found")
     channels = video_store.get_channels(child_id, status="allowed")
     return {"channels": channels}
+
+
+# ── Starter Channels (Onboarding) ──────────────────────────────────
+
+_starter_channels_cache: dict | None = None
+
+
+def _load_starter_channels() -> dict:
+    """Load starter channels from the bundled YAML file. Cached after first load."""
+    global _starter_channels_cache
+    if _starter_channels_cache is not None:
+        return _starter_channels_cache
+
+    yaml_path = Path(__file__).resolve().parent.parent / "starter_channels.yaml"
+    if not yaml_path.exists():
+        _starter_channels_cache = {}
+        return _starter_channels_cache
+
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f) or {}
+    _starter_channels_cache = data
+    return _starter_channels_cache
+
+
+@router.get("/onboarding/starter-channels")
+async def get_starter_channels(child_id: int = Query(0, ge=0)):
+    """Return the curated starter channel list, organized by category.
+
+    If child_id is provided, each channel is annotated with whether
+    it's already imported for that child.
+    """
+    data = _load_starter_channels()
+
+    imported_handles: set[str] = set()
+    if child_id > 0:
+        channels = video_store.get_channels(child_id)
+        for ch in channels:
+            h = ch.get("handle", "")
+            if h:
+                imported_handles.add(h.lower())
+
+    result = {}
+    for category, channels_list in data.items():
+        items = []
+        for ch in channels_list:
+            handle = ch.get("handle", "")
+            items.append({
+                **ch,
+                "imported": handle.lower() in imported_handles if handle else False,
+            })
+        result[category] = items
+
+    return {"categories": result}
+
+
+@router.post("/onboarding/import")
+async def import_starter_channels(body: ImportStarterChannelsBody):
+    """Import selected starter channels for a child.
+
+    Accepts a list of @handles. Adds them to the child's allowed channels
+    with lazy channel_id resolution (no network calls).
+    """
+    child = video_store.get_child(body.child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    data = _load_starter_channels()
+
+    # Build lookup of handle -> channel info
+    handle_lookup: dict[str, dict] = {}
+    for category, channels_list in data.items():
+        for ch in channels_list:
+            h = ch.get("handle", "")
+            if h:
+                handle_lookup[h.lower()] = {**ch, "category_key": category}
+
+    imported = []
+    for handle in body.handles:
+        info = handle_lookup.get(handle.lower())
+        if not info:
+            continue
+        # Map category key to edu/fun
+        cat_key = info.get("category_key", "fun")
+        category = "edu" if cat_key in ("educational", "science") else "fun"
+        name = info.get("name", handle)
+        video_store.add_channel(
+            body.child_id, name, "allowed",
+            handle=info.get("handle"),
+            category=category,
+        )
+        imported.append(handle)
+
+    return {"imported": imported, "count": len(imported), "child_id": body.child_id}
 
 
 # ── Watch Heartbeat ─────────────────────────────────────────────────

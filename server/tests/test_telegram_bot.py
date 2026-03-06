@@ -205,7 +205,7 @@ class TestHelpCommand:
         admin_update.effective_message.reply_text.assert_called_once()
         msg = admin_update.effective_message.reply_text.call_args[0][0]
         assert "TestApp" in msg
-        assert "/kids" in msg
+        assert "/child" in msg
         assert "/pending" in msg
         assert "/time" in msg
 
@@ -1236,3 +1236,150 @@ class TestBotLifecycle:
         bot._set_video_category("vid1", "edu")
         video = store.get_video("vid1")
         assert video["category"] == "edu"
+
+
+class TestChildCommand:
+    """Tests for the /child combined management command (#15)."""
+
+    @pytest.mark.asyncio
+    async def test_child_no_args_lists_kids(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        store.add_child("Sam")
+        context.args = []
+        await bot._cmd_child(admin_update, context)
+        admin_update.effective_message.reply_text.assert_called_once()
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Alex" in text
+        assert "Sam" in text
+
+    @pytest.mark.asyncio
+    async def test_child_add(self, bot, store, admin_update, context):
+        context.args = ["add", "Alex"]
+        await bot._cmd_child(admin_update, context)
+        assert store.get_child_by_name("Alex") is not None
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Alex" in text
+        assert "created" in text
+
+    @pytest.mark.asyncio
+    async def test_child_add_with_avatar(self, bot, store, admin_update, context):
+        context.args = ["add", "Sam", "\U0001f467"]
+        await bot._cmd_child(admin_update, context)
+        child = store.get_child_by_name("Sam")
+        assert child is not None
+        assert child["avatar"] == "\U0001f467"
+
+    @pytest.mark.asyncio
+    async def test_child_remove(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        context.args = ["remove", "Alex"]
+        await bot._cmd_child(admin_update, context)
+        assert store.get_child_by_name("Alex") is None
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "removed" in text
+
+    @pytest.mark.asyncio
+    async def test_child_rename(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        context.args = ["rename", "Alex", "Alexander"]
+        await bot._cmd_child(admin_update, context)
+        assert store.get_child_by_name("Alex") is None
+        assert store.get_child_by_name("Alexander") is not None
+
+    @pytest.mark.asyncio
+    async def test_child_show_profile(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        store.add_video("vid1", "V1", "Ch")
+        store.request_video(child["id"], "vid1")
+        store.update_video_status(child["id"], "vid1", "approved")
+        context.args = ["Alex"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Alex" in text
+        assert "1 approved" in text
+
+    @pytest.mark.asyncio
+    async def test_child_not_found(self, bot, store, admin_update, context):
+        context.args = ["NonExistent"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "not found" in text
+
+
+class TestCombinedStats:
+    """Tests for combined /stats view with multiple children (#15)."""
+
+    @pytest.mark.asyncio
+    async def test_stats_combined_multi_child(self, bot, store, admin_update, context):
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        store.set_child_setting(alex["id"], "daily_limit_minutes", "60")
+        store.set_child_setting(sam["id"], "daily_limit_minutes", "90")
+        store.add_video("v1", "V1", "Ch")
+        store.add_video("v2", "V2", "Ch")
+        store.request_video(alex["id"], "v1")
+        store.request_video(sam["id"], "v2")
+
+        context.args = []
+        await bot._cmd_stats(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "All Children" in text
+        assert "Alex" in text
+        assert "Sam" in text
+
+    @pytest.mark.asyncio
+    async def test_stats_single_child_no_args(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        context.args = []
+        await bot._cmd_stats(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Overall Stats" in text
+
+
+class TestCombinedWatch:
+    """Tests for combined /watch view with multiple children (#15)."""
+
+    @pytest.mark.asyncio
+    async def test_watch_combined_multi_child(self, bot, store, admin_update, context):
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        store.add_video("v1", "Video One", "Ch")
+        store.record_watch_seconds("v1", alex["id"], 120)
+        store.record_watch_seconds("v1", sam["id"], 60)
+
+        context.args = []
+        await bot._cmd_watch(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "All Children" in text
+        assert "Alex" in text
+        assert "Sam" in text
+
+    @pytest.mark.asyncio
+    async def test_watch_combined_no_activity(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        store.add_child("Sam")
+        context.args = []
+        await bot._cmd_watch(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "No watch activity" in text
+
+
+class TestStarterChannelsBot:
+    """Tests for starter channels in the Telegram bot (#13)."""
+
+    def test_load_starter_channels(self, bot):
+        data = bot._load_starter_channels()
+        assert "educational" in data
+        assert "fun" in data
+        assert len(data["educational"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_channel_starter_subcommand(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        context.args = ["starter"]
+        # Need to set up _resolve_child properly
+        context.args = ["Alex", "starter"]
+        await bot._cmd_channel(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Starter Channels" in text

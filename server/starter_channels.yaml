@@ -1,0 +1,142 @@
+## Curated starter channels for first-boot onboarding.
+## Each entry: handle (required), name, category, age_range, description.
+## channel_id resolves lazily on first video request.
+
+educational:
+  - handle: "@SciShow"
+    name: SciShow
+    age_range: "10+"
+    description: Explores unexpected science questions with fun, digestible answers.
+
+  - handle: "@kurzgesagt"
+    name: "Kurzgesagt \u2013 In a Nutshell"
+    age_range: "10+"
+    description: Beautifully animated explainers on science, space, biology, and philosophy.
+
+  - handle: "@crashcourse"
+    name: CrashCourse
+    age_range: "10+"
+    description: Fast-paced courses on history, science, literature, and more.
+
+  - handle: "@TEDEd"
+    name: TED-Ed
+    age_range: "8+"
+    description: Animated lessons from expert educators on every subject imaginable.
+
+  - handle: "@NatGeo"
+    name: National Geographic
+    age_range: "6+"
+    description: Nature, wildlife, and exploration documentaries and clips.
+
+  - handle: "@numberphile"
+    name: Numberphile
+    age_range: "10+"
+    description: Videos about numbers and mathematics from Brady Haran.
+
+  - handle: "@minutephysics"
+    name: minutephysics
+    age_range: "10+"
+    description: Simple physics explanations in one minute or less.
+
+  - handle: "@besmart"
+    name: Be Smart
+    age_range: "10+"
+    description: Deep dives into science questions by Joe Hanson, PhD.
+
+  - handle: "@KhanAcademyKids"
+    name: Khan Academy Kids
+    age_range: "2-7"
+    description: Free educational content for young learners.
+
+  - handle: "@SciShowKids"
+    name: SciShow Kids
+    age_range: "4-8"
+    description: Science for younger kids from the SciShow team.
+
+  - handle: "@Numberblocks"
+    name: Numberblocks
+    age_range: "3-6"
+    description: Fun animated math adventures for pre-schoolers.
+
+  - handle: "@CrashCourseKids"
+    name: Crash Course Kids
+    age_range: "8-12"
+    description: Kid-friendly science lessons from the Crash Course team.
+
+  - handle: "@DrBecky"
+    name: Dr. Becky
+    age_range: "10+"
+    description: Astrophysics explained by Oxford researcher Dr. Becky Smethurst.
+
+fun:
+  - handle: "@BraveWilderness"
+    name: Brave Wilderness
+    age_range: "6+"
+    description: Wildlife adventures and up-close animal encounters.
+
+  - handle: "@OKGo"
+    name: OK Go
+    age_range: "6+"
+    description: Incredible music videos with mind-bending visual effects.
+
+  - handle: "@CorridorCrew"
+    name: Corridor Crew
+    age_range: "10+"
+    description: VFX artists react to and create amazing visual effects.
+
+  - handle: "@LEGO"
+    name: LEGO
+    age_range: "4+"
+    description: Official LEGO channel with building, stories, and adventures.
+
+  - handle: "@BlueyTV"
+    name: Bluey
+    age_range: "3-8"
+    description: Award-winning Australian animated series about a lovable Blue Heeler puppy.
+
+  - handle: "@SesameStreet"
+    name: Sesame Street
+    age_range: "2-6"
+    description: Classic educational children's programming with beloved characters.
+
+  - handle: "@StoryBots"
+    name: StoryBots
+    age_range: "3-8"
+    description: Colorful animated characters answer kids' biggest questions.
+
+  - handle: "@Peanuts"
+    name: Peanuts
+    age_range: "4+"
+    description: Charlie Brown, Snoopy, and the whole Peanuts gang.
+
+music:
+  - handle: "@SuperSimpleSongs"
+    name: Super Simple Songs
+    age_range: "1-5"
+    description: Simple, catchy songs and nursery rhymes for toddlers and preschoolers.
+
+  - handle: "@Cocomelon"
+    name: Cocomelon
+    age_range: "1-4"
+    description: Animated nursery rhymes and kids' songs.
+
+  - handle: "@TheWiggles"
+    name: The Wiggles
+    age_range: "1-6"
+    description: Iconic Australian children's music group.
+
+science:
+  - handle: "@MarkRober"
+    name: Mark Rober
+    age_range: "8+"
+    description: Former NASA engineer builds incredible science projects.
+
+  - handle: "@smartereveryday"
+    name: SmarterEveryDay
+    age_range: "8+"
+    description: Science exploration with slow-motion and engineering deep dives.
+
+  - handle: "@veritasium"
+    name: Veritasium
+    age_range: "10+"
+    description: Science and engineering explained with experiments and expert interviews.

@@ -125,6 +125,7 @@ struct SearchResultsView: View {
             .disabled(true)
         } else {
             Button {
+                viewModel.markAsPending(videoId: result.videoId)
                 onRequest(result)
             } label: {
                 Label("Request", systemImage: "hand.raised")
@@ -184,5 +185,10 @@ final class SearchResultsViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func markAsPending(videoId: String) {
+        guard let index = results.firstIndex(where: { $0.videoId == videoId }) else { return }
+        results[index].accessStatus = "pending"
     }
 }

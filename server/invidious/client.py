@@ -291,6 +291,7 @@ class InvidiousClient:
             "duration": item.get("lengthSeconds", 0),
             "published": item.get("published", 0),
             "view_count": item.get("viewCount", 0),
+            "is_family_friendly": item.get("isFamilyFriendly", True),
         }
 
     def _pick_best_stream(

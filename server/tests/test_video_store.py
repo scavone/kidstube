@@ -531,3 +531,42 @@ class TestStats:
         sam_stats = store.get_stats(child_id=sam["id"])
         assert sam_stats["pending"] == 1
         assert sam_stats["approved"] == 0
+
+
+class TestRequestVideoAtomic:
+    """Tests for the atomic INSERT OR IGNORE behavior of request_video (#27)."""
+
+    def test_concurrent_requests_are_idempotent(self, store):
+        """Two calls for the same child+video return consistent status."""
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        s1 = store.request_video(child["id"], "vid1")
+        s2 = store.request_video(child["id"], "vid1")
+        assert s1 == "pending"
+        assert s2 == "pending"
+
+    def test_auto_approved_returns_correctly(self, store):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Safe Channel", "allowed")
+        store.add_video("vid1", "Title", "Safe Channel")
+        s1 = store.request_video(child["id"], "vid1")
+        assert s1 == "auto_approved"
+        # Second call should return existing status (approved was stored)
+        s2 = store.request_video(child["id"], "vid1")
+        assert s2 == "approved"
+
+    def test_denied_channel_stores_denied(self, store):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Bad Channel", "blocked")
+        store.add_video("vid1", "Title", "Bad Channel")
+        s1 = store.request_video(child["id"], "vid1")
+        assert s1 == "denied"
+        # Second call returns existing denied status
+        s2 = store.request_video(child["id"], "vid1")
+        assert s2 == "denied"
+
+    def test_no_video_record_still_works(self, store):
+        """request_video works even if video isn't in the videos table yet."""
+        child = store.add_child("Alex")
+        status = store.request_video(child["id"], "nonexistent_vid")
+        assert status == "pending"
