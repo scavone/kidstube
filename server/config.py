@@ -40,6 +40,7 @@ class WebConfig:
     host: str = "0.0.0.0"
     port: int = 8080
     poll_interval: int = 3000
+    base_url: str = ""  # External base URL (e.g. https://kidstube.scavone.net)
 
 
 @dataclass
@@ -104,6 +105,7 @@ class Config:
                 host=os.environ.get("BRG_WEB_HOST", "0.0.0.0"),
                 port=int(os.environ.get("BRG_WEB_PORT", "8080")),
                 poll_interval=int(os.environ.get("BRG_POLL_INTERVAL", "3000")),
+                base_url=os.environ.get("BRG_BASE_URL", ""),
             ),
             telegram=TelegramConfig(
                 bot_token=os.environ.get("BRG_BOT_TOKEN", ""),

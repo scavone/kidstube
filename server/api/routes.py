@@ -55,6 +55,16 @@ _FFMPEG_PATH = shutil.which("ffmpeg")
 
 # Active HLS sessions: session_id -> {dir, process, video_id, created_at}
 _hls_sessions: dict[str, dict] = {}
+
+
+def _get_external_base_url(request: Request) -> str:
+    """Get the external base URL for constructing client-facing URLs.
+
+    Uses BRG_BASE_URL config if set, otherwise falls back to request.base_url.
+    """
+    if config and config.web.base_url:
+        return config.web.base_url.rstrip("/")
+    return str(request.base_url).rstrip("/")
 _HLS_SESSION_MAX_AGE = 7200  # 2 hours
 _HLS_SEGMENT_SECONDS = 2  # Short segments for faster initial playback
 
@@ -277,9 +287,9 @@ async def get_stream(
         if pair:
             duration = video.get("duration", 0)
             session_id = await _start_hls_session(video_id, pair, duration=duration)
-            base = str(request.base_url).rstrip("/")
+            base = _get_external_base_url(request)
             hls_url = f"{base}/api/hls/{session_id}/index.m3u8"
-            logger.info("Directing %s to HLS session %s", video_id, session_id)
+            logger.info("Directing %s to HLS session %s (url=%s)", video_id, session_id, hls_url)
             return StreamUrlResponse(url=hls_url, session_id=session_id)
 
     # 2. Try HLS URL from Invidious (if instance provides it)

@@ -87,7 +87,13 @@ def main():
     cfg = load_config()
     logger.info("Starting %s server on %s:%d", cfg.app_name, cfg.web.host, cfg.web.port)
     app = create_app(cfg)
-    uvicorn.run(app, host=cfg.web.host, port=cfg.web.port)
+    uvicorn.run(
+        app,
+        host=cfg.web.host,
+        port=cfg.web.port,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+    )
 
 
 if __name__ == "__main__":
