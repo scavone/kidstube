@@ -176,6 +176,15 @@ BRG_API_KEY = your-api-key-here
 
 ### Build and package
 
+The Xcode project is generated from `tvos/project.yml` via [XcodeGen](https://github.com/yonaskolb/XcodeGen). After adding or removing Swift source files, regenerate the project before building:
+
+```bash
+cd tvos
+xcodegen generate
+```
+
+Then build:
+
 ```bash
 cd tvos
 xcodebuild -project KidsTube.xcodeproj \
