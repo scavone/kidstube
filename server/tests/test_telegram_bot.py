@@ -1414,6 +1414,83 @@ class TestChildCommand:
         text = admin_update.effective_message.reply_text.call_args[0][0]
         assert "not found" in text
 
+    @pytest.mark.asyncio
+    async def test_child_language_set(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        context.args = ["language", "Alex", "es"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "es" in text
+        assert store.get_child_setting(child["id"], "preferred_language") == "es"
+
+    @pytest.mark.asyncio
+    async def test_child_language_clear_off(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "preferred_language", "es")
+        context.args = ["language", "Alex", "off"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "cleared" in text
+        assert store.get_child_setting(child["id"], "preferred_language") == ""
+
+    @pytest.mark.asyncio
+    async def test_child_language_clear_default(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "preferred_language", "fr")
+        context.args = ["language", "Alex", "default"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "cleared" in text
+        assert store.get_child_setting(child["id"], "preferred_language") == ""
+
+    @pytest.mark.asyncio
+    async def test_child_language_not_found(self, bot, store, admin_update, context):
+        context.args = ["language", "Ghost", "en"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "not found" in text
+
+    @pytest.mark.asyncio
+    async def test_child_language_no_args(self, bot, store, admin_update, context):
+        context.args = ["language"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Usage:" in text
+
+    @pytest.mark.asyncio
+    async def test_child_profile_shows_language(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        store.set_child_setting(child["id"], "preferred_language", "es")
+        context.args = ["Alex"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Language:" in text
+        assert "es" in text
+
+    @pytest.mark.asyncio
+    async def test_child_profile_shows_global_default_language(self, bot, store, admin_update, context, cfg):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        cfg.preferred_audio_lang = "en"
+        context.args = ["Alex"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Language:" in text
+        assert "en (global default)" in text
+        cfg.preferred_audio_lang = ""  # reset
+
+    @pytest.mark.asyncio
+    async def test_child_profile_shows_not_set_language(self, bot, store, admin_update, context, cfg):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        cfg.preferred_audio_lang = ""
+        context.args = ["Alex"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Language:" in text
+        assert "not set" in text
+
 
 class TestCombinedStats:
     """Tests for combined /stats view with multiple children (#15)."""

@@ -763,3 +763,76 @@ class TestFreeDayAPI:
         resp = client.get("/api/time-status?child_id=1", headers=auth_headers)
         data = resp.json()
         assert data["remaining_sec"] > 0  # Not unlimited
+
+
+class TestPerChildLanguage:
+    """Tests for per-child preferred audio language (#41)."""
+
+    def test_stream_uses_child_language(self, client, auth_headers, store, mock_invidious, cfg):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+        store.update_video_status(child["id"], "abc12345678", "approved")
+        store.set_child_setting(child["id"], "preferred_language", "es")
+        cfg.preferred_audio_lang = "en"
+
+        mock_video = {
+            "video_id": "abc12345678",
+            "title": "Title",
+            "channel_name": "Channel",
+            "format_streams": [
+                {"type": "video/mp4", "url": "http://test/stream.mp4", "qualityLabel": "360p"}
+            ],
+            "adaptive_formats": [],
+            "hls_url": None,
+        }
+        with patch.object(
+            mock_invidious, "get_video",
+            new_callable=AsyncMock,
+            return_value=mock_video,
+        ), patch.object(
+            mock_invidious, "pick_best_adaptive_pair",
+            return_value=None,
+        ) as mock_pick:
+            resp = client.get("/api/stream/abc12345678?child_id=1", headers=auth_headers)
+
+        assert resp.status_code == 200
+        # pick_best_adaptive_pair should have been called with child's language, not global
+        if mock_pick.called:
+            call_kwargs = mock_pick.call_args
+            assert call_kwargs[1].get("preferred_lang") == "es" or call_kwargs[0][1] == "es"
+        cfg.preferred_audio_lang = ""
+
+    def test_stream_falls_back_to_global_language(self, client, auth_headers, store, mock_invidious, cfg):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+        store.update_video_status(child["id"], "abc12345678", "approved")
+        # No per-child language set
+        cfg.preferred_audio_lang = "en"
+
+        mock_video = {
+            "video_id": "abc12345678",
+            "title": "Title",
+            "channel_name": "Channel",
+            "format_streams": [
+                {"type": "video/mp4", "url": "http://test/stream.mp4", "qualityLabel": "360p"}
+            ],
+            "adaptive_formats": [],
+            "hls_url": None,
+        }
+        with patch.object(
+            mock_invidious, "get_video",
+            new_callable=AsyncMock,
+            return_value=mock_video,
+        ), patch.object(
+            mock_invidious, "pick_best_adaptive_pair",
+            return_value=None,
+        ) as mock_pick:
+            resp = client.get("/api/stream/abc12345678?child_id=1", headers=auth_headers)
+
+        assert resp.status_code == 200
+        if mock_pick.called:
+            call_kwargs = mock_pick.call_args
+            assert call_kwargs[1].get("preferred_lang") == "en" or call_kwargs[0][1] == "en"
+        cfg.preferred_audio_lang = ""

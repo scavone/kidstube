@@ -308,8 +308,11 @@ async def get_stream(
     # 1. Prefer HLS via ffmpeg adaptive muxing (up to 1080p)
     if _FFMPEG_PATH:
         adaptive = video.get("adaptive_formats", [])
+        # Per-child language overrides the global config
+        child_lang = video_store.get_child_setting(child_id, "preferred_language", "")
+        preferred_lang = child_lang or config.preferred_audio_lang
         pair = invidious_client.pick_best_adaptive_pair(
-            adaptive, preferred_lang=config.preferred_audio_lang
+            adaptive, preferred_lang=preferred_lang
         )
         if pair:
             duration = video.get("duration", 0)

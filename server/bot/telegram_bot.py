@@ -521,6 +521,7 @@ class TelegramBot:
         /child add <name> [pin] — create profile
         /child remove <name> — delete profile
         /child rename <old> <new> — rename profile
+        /child language <name> <code|off|default> — set preferred audio language
         /child <name> — show single child profile summary
         """
         if not await self._check_admin(update):
@@ -593,6 +594,37 @@ class TelegramBot:
             )
             return
 
+        # /child language <name> <code|off|default>
+        if subcmd == "language":
+            if len(args) < 3:
+                await update.effective_message.reply_text(
+                    "Usage: /child language ChildName code\n"
+                    "Example: /child language Alex es\n"
+                    "Use 'off' or 'default' to clear the override."
+                )
+                return
+            name = args[1]
+            lang_value = args[2].lower()
+            child = self.video_store.get_child_by_name(name)
+            if not child:
+                await update.effective_message.reply_text(f"Child '{name}' not found.")
+                return
+            if lang_value in ("off", "default"):
+                self.video_store.set_child_setting(child["id"], "preferred_language", "")
+                global_lang = self.config.preferred_audio_lang or "none"
+                await update.effective_message.reply_text(
+                    f"Language override cleared for <b>{_esc(child['name'])}</b>.\n"
+                    f"Using global default: <code>{_esc(global_lang)}</code>",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                self.video_store.set_child_setting(child["id"], "preferred_language", lang_value)
+                await update.effective_message.reply_text(
+                    f"Preferred audio language for <b>{_esc(child['name'])}</b> set to <code>{_esc(lang_value)}</code>",
+                    parse_mode=ParseMode.HTML,
+                )
+            return
+
         # /child <Name> — show single child summary
         child = self.video_store.get_child_by_name(args[0])
         if not child:
@@ -603,6 +635,7 @@ class TelegramBot:
                 "/child add Name [Avatar]\n"
                 "/child remove Name\n"
                 "/child rename OldName NewName\n"
+                "/child language Name code \u2014 Set audio language\n"
                 "/child ChildName \u2014 Show profile summary"
             )
             return
@@ -621,12 +654,21 @@ class TelegramBot:
         channels = self.video_store.get_channels(cid, status="allowed")
         bar = _progress_bar(used / limit if limit > 0 else 0)
 
+        child_lang = self.video_store.get_child_setting(cid, "preferred_language", "")
+        if child_lang:
+            lang_display = child_lang
+        elif self.config.preferred_audio_lang:
+            lang_display = f"{self.config.preferred_audio_lang} (global default)"
+        else:
+            lang_display = "not set"
+
         lines = [
             f"{child.get('avatar', '')} <b>{_esc(child['name'])}</b>\n",
             f"<b>Time Today:</b> {used:.0f}/{limit} min {bar}",
             f"Remaining: {remaining:.0f} min\n",
             f"<b>Videos:</b> {stats['approved']} approved, {stats['pending']} pending, {stats['denied']} denied",
             f"<b>Channels:</b> {len(channels)} allowed",
+            f"<b>Language:</b> {_esc(lang_display)}",
         ]
 
         await update.effective_message.reply_text(
