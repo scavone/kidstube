@@ -1709,3 +1709,144 @@ class TestFreeDayCommand:
         text = admin_update.effective_message.reply_text.call_args[0][0]
         assert "unlimited" in text
         assert "ACTIVE" in text
+
+
+class TestFamilySafeFilter:
+    """Tests for /child familysafe command and notification warning (#34)."""
+
+    @pytest.mark.asyncio
+    async def test_familysafe_on(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        context.args = ["familysafe", "Alex", "on"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "enabled" in text
+        assert store.get_child_setting(child["id"], "family_safe_filter") == "on"
+
+    @pytest.mark.asyncio
+    async def test_familysafe_off(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        context.args = ["familysafe", "Alex", "off"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "disabled" in text
+        assert store.get_child_setting(child["id"], "family_safe_filter") == "off"
+
+    @pytest.mark.asyncio
+    async def test_familysafe_invalid_value(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        context.args = ["familysafe", "Alex", "maybe"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "on" in text and "off" in text
+
+    @pytest.mark.asyncio
+    async def test_familysafe_missing_args(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        context.args = ["familysafe"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Usage" in text
+
+    @pytest.mark.asyncio
+    async def test_familysafe_child_not_found(self, bot, store, admin_update, context):
+        context.args = ["familysafe", "Ghost", "on"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "not found" in text
+
+    @pytest.mark.asyncio
+    async def test_child_summary_shows_filter_state(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        context.args = ["Alex"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Family Safe Filter" in text
+        assert "on" in text
+
+    @pytest.mark.asyncio
+    async def test_child_summary_shows_filter_off(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        store.set_child_setting(child["id"], "family_safe_filter", "off")
+        context.args = ["Alex"]
+        await bot._cmd_child(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Family Safe Filter" in text
+        assert "off" in text
+
+    @pytest.mark.asyncio
+    async def test_notify_warns_non_family_friendly(self, bot, store):
+        """Notification includes warning for non-family-friendly videos."""
+        child = store.add_child("Alex")
+        video = {
+            "video_id": "abc12345678",
+            "title": "Test Video",
+            "channel_name": "Test Channel",
+            "duration": 300,
+            "thumbnail_url": "",
+        }
+
+        bot._app = MagicMock()
+        bot._app.bot = AsyncMock()
+        bot._app.bot.send_message = AsyncMock()
+
+        mock_inv_client = AsyncMock()
+        mock_inv_client.get_video = AsyncMock(return_value={
+            "video_id": "abc12345678",
+            "is_family_friendly": False,
+        })
+        bot.inv_client = mock_inv_client
+
+        await bot.notify_new_request(child, video)
+        bot._app.bot.send_message.assert_called_once()
+        call_kwargs = bot._app.bot.send_message.call_args[1]
+        assert "Not marked as family-friendly" in call_kwargs["text"]
+
+    @pytest.mark.asyncio
+    async def test_notify_no_warning_for_family_friendly(self, bot, store):
+        """No warning when video is family-friendly."""
+        child = store.add_child("Alex")
+        video = {
+            "video_id": "abc12345678",
+            "title": "Test Video",
+            "channel_name": "Test Channel",
+            "duration": 300,
+            "thumbnail_url": "",
+        }
+
+        bot._app = MagicMock()
+        bot._app.bot = AsyncMock()
+        bot._app.bot.send_message = AsyncMock()
+
+        mock_inv_client = AsyncMock()
+        mock_inv_client.get_video = AsyncMock(return_value={
+            "video_id": "abc12345678",
+            "is_family_friendly": True,
+        })
+        bot.inv_client = mock_inv_client
+
+        await bot.notify_new_request(child, video)
+        bot._app.bot.send_message.assert_called_once()
+        call_kwargs = bot._app.bot.send_message.call_args[1]
+        assert "Not marked as family-friendly" not in call_kwargs["text"]
+
+    @pytest.mark.asyncio
+    async def test_notify_warning_without_inv_client(self, bot, store):
+        """No crash when inv_client is None."""
+        child = store.add_child("Alex")
+        video = {
+            "video_id": "abc12345678",
+            "title": "Test Video",
+            "channel_name": "Test Channel",
+            "thumbnail_url": "",
+        }
+
+        bot._app = MagicMock()
+        bot._app.bot = AsyncMock()
+        bot._app.bot.send_message = AsyncMock()
+        bot.inv_client = None
+
+        await bot.notify_new_request(child, video)
+        bot._app.bot.send_message.assert_called_once()

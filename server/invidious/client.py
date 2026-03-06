@@ -23,16 +23,24 @@ class InvidiousClient:
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
 
-    async def search(self, query: str, max_results: int = 20) -> list[dict]:
+    async def search(
+        self, query: str, max_results: int = 20, family_safe: bool = False
+    ) -> list[dict]:
         """Search for videos via Invidious.
 
         Returns a list of simplified video dicts with keys:
         video_id, title, channel_name, channel_id, thumbnail_url, duration, published
+
+        If family_safe is True, passes features=familySafe to Invidious
+        for server-side filtering.
         """
+        params = {"q": query, "type": "video", "sort_by": "relevance"}
+        if family_safe:
+            params["features"] = "familySafe"
         async with self._client() as client:
             resp = await client.get(
                 "/api/v1/search",
-                params={"q": query, "type": "video", "sort_by": "relevance"},
+                params=params,
             )
             resp.raise_for_status()
             raw_results = resp.json()

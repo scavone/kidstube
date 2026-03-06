@@ -181,10 +181,17 @@ async def search_videos(
     else:
         word_patterns = []
 
-    results = await invidious_client.search(q, max_results=config.invidious.search_max_results)
+    # Per-child family safe filter (default: on)
+    family_safe_setting = video_store.get_child_setting(child_id, "family_safe_filter", "on")
+    family_safe_on = family_safe_setting != "off"
 
-    # Filter videos flagged as not family-friendly
-    results = [r for r in results if r.get("is_family_friendly", True) is not False]
+    results = await invidious_client.search(
+        q, max_results=config.invidious.search_max_results, family_safe=family_safe_on
+    )
+
+    # Client-side safety net: also filter non-family-friendly results when filter is on
+    if family_safe_on:
+        results = [r for r in results if r.get("is_family_friendly", True) is not False]
 
     # Filter blocked channels (per-child)
     blocked = video_store.get_blocked_channels_set(child_id)

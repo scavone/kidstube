@@ -131,6 +131,44 @@ class TestSearch:
         assert results[1]["video_id"] == "vid2"
 
     @pytest.mark.asyncio
+    async def test_search_passes_family_safe_param(self, client):
+        """When family_safe=True, search includes features=familySafe."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(return_value=mock_resp)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(client, "_client", return_value=mock_client_instance):
+            await client.search("test", family_safe=True)
+
+        call_kwargs = mock_client_instance.get.call_args
+        params = call_kwargs[1]["params"]
+        assert params["features"] == "familySafe"
+
+    @pytest.mark.asyncio
+    async def test_search_no_family_safe_param_by_default(self, client):
+        """By default (family_safe=False), no features param is sent."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(return_value=mock_resp)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(client, "_client", return_value=mock_client_instance):
+            await client.search("test")
+
+        call_kwargs = mock_client_instance.get.call_args
+        params = call_kwargs[1]["params"]
+        assert "features" not in params
+
+    @pytest.mark.asyncio
     async def test_search_respects_max_results(self, client):
         mock_response = [
             {"type": "video", "videoId": f"vid{i}", "title": f"Video {i}", "author": "Ch", "authorId": "UC", "lengthSeconds": 60, "videoThumbnails": []}

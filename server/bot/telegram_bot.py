@@ -177,6 +177,17 @@ class TelegramBot:
         duration = video.get("duration")
 
         dur_str = format_duration(duration) if duration else ""
+
+        # Fetch family-friendly flag from Invidious for the warning
+        family_friendly_warning = ""
+        if self.inv_client and video_id:
+            try:
+                inv_video = await self.inv_client.get_video(video_id)
+                if inv_video and inv_video.get("is_family_friendly") is False:
+                    family_friendly_warning = "\n\u26a0\ufe0f <b>Not marked as family-friendly</b>"
+            except Exception:
+                logger.debug("Could not fetch family-friendly flag for %s", video_id)
+
         caption = (
             f"<b>[{_esc(child_name)}] New Video Request</b>\n\n"
             f"<b>{_esc(title)}</b>\n"
@@ -184,6 +195,8 @@ class TelegramBot:
         )
         if dur_str:
             caption += f" • {dur_str}"
+        if family_friendly_warning:
+            caption += family_friendly_warning
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
@@ -521,6 +534,7 @@ class TelegramBot:
         /child add <name> [pin] — create profile
         /child remove <name> — delete profile
         /child rename <old> <new> — rename profile
+        /child familysafe <name> on|off — toggle family safe filter
         /child language <name> <code|off|default> — set preferred audio language
         /child <name> — show single child profile summary
         """
@@ -594,6 +608,30 @@ class TelegramBot:
             )
             return
 
+        # /child familysafe <name> on|off
+        if subcmd == "familysafe":
+            if len(args) < 3:
+                await update.effective_message.reply_text(
+                    "Usage: /child familysafe ChildName on|off"
+                )
+                return
+            name = args[1]
+            value = args[2].lower()
+            if value not in ("on", "off"):
+                await update.effective_message.reply_text("Value must be 'on' or 'off'.")
+                return
+            child = self.video_store.get_child_by_name(name)
+            if not child:
+                await update.effective_message.reply_text(f"Child '{name}' not found.")
+                return
+            self.video_store.set_child_setting(child["id"], "family_safe_filter", value)
+            status_text = "enabled" if value == "on" else "disabled"
+            await update.effective_message.reply_text(
+                f"Family safe filter <b>{status_text}</b> for <b>{_esc(child['name'])}</b>.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
         # /child language <name> <code|off|default>
         if subcmd == "language":
             if len(args) < 3:
@@ -635,6 +673,7 @@ class TelegramBot:
                 "/child add Name [Avatar]\n"
                 "/child remove Name\n"
                 "/child rename OldName NewName\n"
+                "/child familysafe Name on|off \u2014 Toggle safe filter\n"
                 "/child language Name code \u2014 Set audio language\n"
                 "/child ChildName \u2014 Show profile summary"
             )
@@ -662,6 +701,9 @@ class TelegramBot:
         else:
             lang_display = "not set"
 
+        family_safe = self.video_store.get_child_setting(cid, "family_safe_filter", "on")
+        family_safe_display = "on" if family_safe != "off" else "off"
+
         lines = [
             f"{child.get('avatar', '')} <b>{_esc(child['name'])}</b>\n",
             f"<b>Time Today:</b> {used:.0f}/{limit} min {bar}",
@@ -669,6 +711,7 @@ class TelegramBot:
             f"<b>Videos:</b> {stats['approved']} approved, {stats['pending']} pending, {stats['denied']} denied",
             f"<b>Channels:</b> {len(channels)} allowed",
             f"<b>Language:</b> {_esc(lang_display)}",
+            f"<b>Family Safe Filter:</b> {family_safe_display}",
         ]
 
         await update.effective_message.reply_text(

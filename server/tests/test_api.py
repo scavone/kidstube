@@ -765,6 +765,93 @@ class TestFreeDayAPI:
         assert data["remaining_sec"] > 0  # Not unlimited
 
 
+class TestFamilySafeFilter:
+    """Tests for per-child family safe filter (#34)."""
+
+    def test_search_with_filter_on_passes_family_safe(self, client, auth_headers, store, mock_invidious):
+        """When family_safe_filter is on (default), search passes family_safe=True to Invidious."""
+        child = store.add_child("Alex")
+
+        mock_results = [
+            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": True},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results) as mock_search:
+            resp = client.get(f"/api/search?q=test&child_id={child['id']}", headers=auth_headers)
+
+        assert resp.status_code == 200
+        mock_search.assert_called_once()
+        call_kwargs = mock_search.call_args
+        assert call_kwargs[1].get("family_safe") is True or (len(call_kwargs[0]) >= 3 and call_kwargs[0][2] is True)
+
+    def test_search_with_filter_off_no_family_safe(self, client, auth_headers, store, mock_invidious):
+        """When family_safe_filter is off, search passes family_safe=False and does not filter results."""
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "family_safe_filter", "off")
+
+        mock_results = [
+            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": True},
+            {"video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": False},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results) as mock_search:
+            resp = client.get(f"/api/search?q=test&child_id={child['id']}", headers=auth_headers)
+
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        # Both results should be returned (no client-side filtering)
+        assert len(results) == 2
+        # Invidious search should not have family_safe=True
+        call_kwargs = mock_search.call_args
+        assert call_kwargs[1].get("family_safe") is False or (len(call_kwargs[0]) >= 3 and call_kwargs[0][2] is False)
+
+    def test_search_with_filter_on_filters_non_family_friendly(self, client, auth_headers, store, mock_invidious):
+        """When filter is on, non-family-friendly results are filtered client-side as safety net."""
+        child = store.add_child("Alex")
+        # Default is on
+
+        mock_results = [
+            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": True},
+            {"video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": False},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results):
+            resp = client.get(f"/api/search?q=test&child_id={child['id']}", headers=auth_headers)
+
+        results = resp.json()["results"]
+        assert len(results) == 1
+        assert results[0]["video_id"] == "v1"
+
+    def test_default_filter_is_on(self, client, auth_headers, store, mock_invidious):
+        """Without setting family_safe_filter, default behavior is on."""
+        child = store.add_child("Alex")
+        # Verify no setting exists
+        assert store.get_child_setting(child["id"], "family_safe_filter", "on") == "on"
+
+        mock_results = [
+            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
+             "is_family_friendly": True},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results) as mock_search:
+            resp = client.get(f"/api/search?q=test&child_id={child['id']}", headers=auth_headers)
+
+        assert resp.status_code == 200
+        call_kwargs = mock_search.call_args
+        assert call_kwargs[1].get("family_safe") is True
+
+
 class TestPerChildLanguage:
     """Tests for per-child preferred audio language (#41)."""
 
