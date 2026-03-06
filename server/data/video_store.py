@@ -540,8 +540,16 @@ class VideoStore:
                 )
             return [dict(row) for row in cursor.fetchall()]
 
+    _SORT_CLAUSES = {
+        "newest": "v.published_at IS NULL, v.published_at DESC",
+        "oldest": "v.published_at IS NULL, v.published_at ASC",
+        "title": "v.title COLLATE NOCASE ASC",
+        "channel": "v.channel_name COLLATE NOCASE ASC, v.title COLLATE NOCASE ASC",
+    }
+
     def get_approved_videos(self, child_id: int, category: Optional[str] = None,
                             channel: Optional[str] = None,
+                            sort_by: str = "newest",
                             offset: int = 0, limit: int = 24) -> tuple[list[dict], int]:
         """Get paginated approved videos for a child.
 
@@ -575,6 +583,8 @@ class VideoStore:
             ).fetchone()
             total = count_row[0] if count_row else 0
 
+            order_clause = self._SORT_CLAUSES.get(sort_by, self._SORT_CLAUSES["newest"])
+
             cursor = self.conn.execute(
                 f"""SELECT v.*, COALESCE(v.category, ch.category, 'fun') as effective_category,
                            cva.decided_at as access_decided_at
@@ -584,7 +594,7 @@ class VideoStore:
                         ON v.channel_name = ch.channel_name COLLATE NOCASE
                         AND ch.child_id = cva.child_id
                     WHERE {where_clause}
-                    ORDER BY v.published_at IS NULL, v.published_at DESC
+                    ORDER BY {order_clause}
                     LIMIT ? OFFSET ?""",
                 params + [limit, offset],
             )

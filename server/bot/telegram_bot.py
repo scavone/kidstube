@@ -107,6 +107,7 @@ class TelegramBot:
             CommandHandler("time", self._cmd_time),
             CommandHandler("watch", self._cmd_watch),
             CommandHandler("search", self._cmd_search),
+            CommandHandler("freeday", self._cmd_freeday),
             MessageHandler(filters.PHOTO & ~filters.COMMAND, self._handle_photo),
             CallbackQueryHandler(self._handle_callback),
         ]
@@ -274,6 +275,20 @@ class TelegramBot:
             await self._import_starter_channel(query, child_id, handle)
             return
 
+        # Pending list actions: pnd_edu/pnd_fun/pnd_deny:child_id:page:video_id
+        if action in ("pnd_edu", "pnd_fun", "pnd_deny") and len(parts) >= 4:
+            child_id = int(parts[1])
+            page = int(parts[2])
+            video_id = ":".join(parts[3:])
+            if action == "pnd_deny":
+                self.video_store.update_video_status(child_id, video_id, "denied")
+            else:
+                category = "edu" if action == "pnd_edu" else "fun"
+                self.video_store.update_video_status(child_id, video_id, "approved")
+                self._set_video_category(video_id, category)
+            await self._show_pending_page(query.message, page)
+            return
+
         # Revoke from approved list: rev:child_id:page:video_id
         if action == "rev" and len(parts) >= 4:
             child_id = int(parts[1])
@@ -413,7 +428,8 @@ class TelegramBot:
             "<b>Activity</b>\n"
             "/stats [ChildName] — Video statistics (combined if omitted)\n"
             "/watch [ChildName] — Watch activity (combined if omitted)\n"
-            "/time [ChildName] — View/set time limits\n\n"
+            "/time [ChildName] — View/set time limits\n"
+            "/freeday [ChildName] — Grant unlimited watch time today\n\n"
             "<i>Child name can be omitted if only one child exists.</i>\n"
             "<i>Send a photo with caption \"avatar ChildName\" to set a photo avatar.</i>"
         )
@@ -748,7 +764,7 @@ class TelegramBot:
         await self._show_pending_page(update.effective_message, page=0, edit=False)
 
     async def _show_pending_page(self, message, page: int = 0, edit: bool = True):
-        """Display a page of pending video requests."""
+        """Display a page of pending video requests with action buttons."""
         pending = self.video_store.get_pending_requests()
 
         if not pending:
@@ -761,24 +777,33 @@ class TelegramBot:
         page_items = pending[start:start + _PENDING_PAGE_SIZE]
 
         lines = [f"<b>Pending Requests ({total})</b>\n"]
-        for item in page_items:
+        action_rows = []
+        for i, item in enumerate(page_items, start=start + 1):
+            child_id = item["child_id"]
+            video_id = item["video_id"]
             child_name = item.get("child_name", "?")
-            title = item.get("title", item["video_id"])
+            title = item.get("title", video_id)
             channel = item.get("channel_name", "?")
             dur = format_duration(item.get("duration"))
             lines.append(
-                f"[{_esc(child_name)}] <b>{_esc(title)}</b>\n"
+                f"{i}. [{_esc(child_name)}] <b>{_esc(title)}</b>\n"
                 f"  {_esc(channel)} • {dur}"
             )
+            action_rows.append([
+                InlineKeyboardButton(f"✓ Edu {i}", callback_data=f"pnd_edu:{child_id}:{page}:{video_id}"),
+                InlineKeyboardButton(f"✓ Fun {i}", callback_data=f"pnd_fun:{child_id}:{page}:{video_id}"),
+                InlineKeyboardButton(f"✗ {i}", callback_data=f"pnd_deny:{child_id}:{page}:{video_id}"),
+            ])
 
         # Pagination buttons
-        buttons = []
+        nav = []
         if page > 0:
-            buttons.append(InlineKeyboardButton("< Prev", callback_data=f"pending_page:{page - 1}"))
+            nav.append(InlineKeyboardButton("< Prev", callback_data=f"pending_page:{page - 1}"))
         if start + _PENDING_PAGE_SIZE < total:
-            buttons.append(InlineKeyboardButton("Next >", callback_data=f"pending_page:{page + 1}"))
+            nav.append(InlineKeyboardButton("Next >", callback_data=f"pending_page:{page + 1}"))
 
-        keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+        rows = action_rows + ([nav] if nav else [])
+        keyboard = InlineKeyboardMarkup(rows) if rows else None
         text = "\n".join(lines)
         await self._send_or_edit(message, text, keyboard=keyboard, edit=edit)
 
@@ -1288,6 +1313,11 @@ class TelegramBot:
         today = get_today_str(tz)
         bounds = get_day_utc_bounds(today, tz)
         used = self.video_store.get_daily_watch_minutes(cid, today, utc_bounds=bounds)
+
+        # Check free day pass
+        free_day = self.video_store.get_child_setting(cid, "free_day_date", "")
+        is_free_day = free_day == today
+
         remaining = max(0, limit - used)
 
         bar = _progress_bar(used / limit if limit > 0 else 0)
@@ -1296,9 +1326,12 @@ class TelegramBot:
             f"<b>Time Status — {_esc(cname)}</b>\n",
             f"Daily limit: {limit} min" + (" (off)" if limit == 0 else ""),
             f"Used today: {used:.0f} min",
-            f"Remaining: {remaining:.0f} min",
+            f"Remaining: {'unlimited' if is_free_day else f'{remaining:.0f} min'}",
             f"Progress: {bar}",
         ]
+
+        if is_free_day:
+            lines.append("\nFree day pass: <b>ACTIVE</b>")
 
         # Schedule
         sched_start = self.video_store.get_child_setting(cid, "schedule_start", "")
@@ -1312,6 +1345,61 @@ class TelegramBot:
             lines.append(f"Status: {status}")
 
         await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+    async def _cmd_freeday(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Grant or revoke a free day pass (unlimited watch time today).
+
+        /freeday [ChildName] — toggle free day for today
+        /freeday [ChildName] off — revoke free day
+        """
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        child, sub_args = self._parse_child_args(args)
+
+        if not child:
+            children = self._all_children()
+            if not children:
+                await update.effective_message.reply_text("No child profiles yet.")
+                return
+            if len(children) > 1:
+                names = ", ".join(c["name"] for c in children)
+                await update.effective_message.reply_text(
+                    f"Specify a child: /freeday [Name] [off]\nChildren: {names}"
+                )
+                return
+            child = children[0]
+            sub_args = list(args)
+
+        cid = child["id"]
+        cname = child["name"]
+        tz = self.config.watch_limits.timezone
+        today = get_today_str(tz)
+
+        # /freeday [Child] off — revoke
+        if sub_args and sub_args[0].lower() == "off":
+            self.video_store.set_child_setting(cid, "free_day_date", "")
+            await update.effective_message.reply_text(
+                f"Free day pass <b>revoked</b> for {_esc(cname)}.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        # Toggle: if already set for today, revoke; otherwise grant
+        current = self.video_store.get_child_setting(cid, "free_day_date", "")
+        if current == today:
+            self.video_store.set_child_setting(cid, "free_day_date", "")
+            await update.effective_message.reply_text(
+                f"Free day pass <b>revoked</b> for {_esc(cname)}.",
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            self.video_store.set_child_setting(cid, "free_day_date", today)
+            await update.effective_message.reply_text(
+                f"Free day pass <b>granted</b> for {_esc(cname)} today! No time limits.",
+                parse_mode=ParseMode.HTML,
+            )
 
     async def _cmd_watch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_admin(update):

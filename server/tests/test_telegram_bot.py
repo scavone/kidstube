@@ -1383,3 +1383,144 @@ class TestStarterChannelsBot:
         await bot._cmd_channel(admin_update, context)
         text = admin_update.effective_message.reply_text.call_args[0][0]
         assert "Starter Channels" in text
+
+
+# ── Pending List Actions (#29) ────────────────────────────────────
+
+class TestPendingActions:
+    """Tests for inline approve/deny buttons on the /pending list (#29)."""
+
+    def _make_callback_update(self, data: str):
+        update = MagicMock()
+        update.effective_chat.id = 12345
+        update.effective_user.id = 12345
+        update.callback_query = AsyncMock()
+        update.callback_query.data = data
+        update.callback_query.answer = AsyncMock()
+        update.callback_query.edit_message_caption = AsyncMock()
+        update.callback_query.message = AsyncMock()
+        return update
+
+    @pytest.mark.asyncio
+    async def test_pending_list_shows_action_buttons(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Test Video", "Channel", duration=120)
+        store.request_video(child["id"], "vid12345678")
+
+        context.args = []
+        await bot._cmd_pending(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Pending Requests" in text
+        assert "Test Video" in text
+
+    @pytest.mark.asyncio
+    async def test_pnd_edu_approves_from_pending_list(self, bot, store, context):
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Test Video", "Channel")
+        store.request_video(child["id"], "vid12345678")
+
+        update = self._make_callback_update(f"pnd_edu:{child['id']}:0:vid12345678")
+        await bot._handle_callback(update, context)
+
+        assert store.get_video_status(child["id"], "vid12345678") == "approved"
+        video = store.get_video("vid12345678")
+        assert video["category"] == "edu"
+
+    @pytest.mark.asyncio
+    async def test_pnd_fun_approves_from_pending_list(self, bot, store, context):
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Test Video", "Channel")
+        store.request_video(child["id"], "vid12345678")
+
+        update = self._make_callback_update(f"pnd_fun:{child['id']}:0:vid12345678")
+        await bot._handle_callback(update, context)
+
+        assert store.get_video_status(child["id"], "vid12345678") == "approved"
+        video = store.get_video("vid12345678")
+        assert video["category"] == "fun"
+
+    @pytest.mark.asyncio
+    async def test_pnd_deny_from_pending_list(self, bot, store, context):
+        child = store.add_child("Alex")
+        store.add_video("vid12345678", "Test Video", "Channel")
+        store.request_video(child["id"], "vid12345678")
+
+        update = self._make_callback_update(f"pnd_deny:{child['id']}:0:vid12345678")
+        await bot._handle_callback(update, context)
+
+        assert store.get_video_status(child["id"], "vid12345678") == "denied"
+
+
+# ── Free Day Pass (#32) ──────────────────────────────────────────
+
+class TestFreeDayCommand:
+    """Tests for /freeday command (#32)."""
+
+    @pytest.mark.asyncio
+    async def test_freeday_grants_pass(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        context.args = ["Alex"]
+        await bot._cmd_freeday(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "granted" in text
+
+        free_day = store.get_child_setting(child["id"], "free_day_date", "")
+        assert free_day != ""  # Should be today's date
+
+    @pytest.mark.asyncio
+    async def test_freeday_toggle_revokes(self, bot, store, admin_update, context):
+        from utils import get_today_str
+        child = store.add_child("Alex")
+        tz = bot.config.watch_limits.timezone
+        today = get_today_str(tz)
+        store.set_child_setting(child["id"], "free_day_date", today)
+
+        context.args = ["Alex"]
+        await bot._cmd_freeday(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "revoked" in text
+        assert store.get_child_setting(child["id"], "free_day_date", "") == ""
+
+    @pytest.mark.asyncio
+    async def test_freeday_off(self, bot, store, admin_update, context):
+        from utils import get_today_str
+        child = store.add_child("Alex")
+        tz = bot.config.watch_limits.timezone
+        today = get_today_str(tz)
+        store.set_child_setting(child["id"], "free_day_date", today)
+
+        context.args = ["Alex", "off"]
+        await bot._cmd_freeday(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "revoked" in text
+
+    @pytest.mark.asyncio
+    async def test_freeday_single_child_default(self, bot, store, admin_update, context):
+        child = store.add_child("Alex")
+        context.args = []
+        await bot._cmd_freeday(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "granted" in text
+
+    @pytest.mark.asyncio
+    async def test_freeday_multi_child_requires_name(self, bot, store, admin_update, context):
+        store.add_child("Alex")
+        store.add_child("Sam")
+        context.args = []
+        await bot._cmd_freeday(admin_update, context)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Specify a child" in text
+
+    @pytest.mark.asyncio
+    async def test_time_status_shows_free_day(self, bot, store, admin_update, context):
+        from utils import get_today_str
+        child = store.add_child("Alex")
+        tz = bot.config.watch_limits.timezone
+        today = get_today_str(tz)
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        store.set_child_setting(child["id"], "free_day_date", today)
+
+        await bot._show_time_status(admin_update.effective_message, child)
+        text = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "unlimited" in text
+        assert "ACTIVE" in text

@@ -19,6 +19,8 @@ import yaml
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from api.auth import verify_api_key
 from api.models import (
@@ -36,6 +38,8 @@ from api.models import (
 from utils import get_today_str, get_day_utc_bounds, is_within_schedule, format_time_12h
 
 logger = logging.getLogger(__name__)
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_api_key)])
 public_router = APIRouter(prefix="/api")
@@ -153,7 +157,9 @@ async def get_avatar(child_id: int):
 # ── Search ──────────────────────────────────────────────────────────
 
 @router.get("/search")
+@limiter.limit("30/minute")
 async def search_videos(
+    request: Request,
     q: str = Query(..., min_length=1, max_length=200),
     child_id: int = Query(..., gt=0),
 ):
@@ -221,7 +227,8 @@ async def search_videos(
 # ── Request Video ───────────────────────────────────────────────────
 
 @router.post("/request")
-async def request_video(body: VideoRequestBody):
+@limiter.limit("20/minute")
+async def request_video(request: Request, body: VideoRequestBody):
     child = video_store.get_child(body.child_id)
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
@@ -417,11 +424,15 @@ async def delete_hls_session(session_id: str):
 
 # ── Catalog ─────────────────────────────────────────────────────────
 
+_CATALOG_SORT_OPTIONS = {"newest", "oldest", "title", "channel"}
+
+
 @router.get("/catalog")
 async def get_catalog(
     child_id: int = Query(..., gt=0),
     category: str = Query("", max_length=10),
     channel: str = Query("", max_length=200),
+    sort_by: str = Query("newest", max_length=20),
     offset: int = Query(0, ge=0),
     limit: int = Query(24, ge=1, le=100),
 ):
@@ -429,10 +440,17 @@ async def get_catalog(
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
 
+    if sort_by not in _CATALOG_SORT_OPTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sort_by. Options: {', '.join(sorted(_CATALOG_SORT_OPTIONS))}",
+        )
+
     videos, total = video_store.get_approved_videos(
         child_id,
         category=category or None,
         channel=channel or None,
+        sort_by=sort_by,
         offset=offset,
         limit=limit,
     )
@@ -551,7 +569,8 @@ async def import_starter_channels(body: ImportStarterChannelsBody):
 # ── Watch Heartbeat ─────────────────────────────────────────────────
 
 @router.post("/watch-heartbeat")
-async def watch_heartbeat(body: HeartbeatBody):
+@limiter.limit("10/minute")
+async def watch_heartbeat(request: Request, body: HeartbeatBody):
     global _heartbeat_last_cleanup
 
     if not VIDEO_ID_RE.match(body.video_id):
@@ -615,14 +634,22 @@ async def time_status(child_id: int = Query(..., gt=0)):
     today = get_today_str(tz)
     bounds = get_day_utc_bounds(today, tz)
     used_min = video_store.get_daily_watch_minutes(child_id, today, utc_bounds=bounds)
-    remaining_min = max(0.0, limit_min - used_min)
+
+    # Free day pass — unlimited
+    free_day = video_store.get_child_setting(child_id, "free_day_date", "")
+    is_free_day = free_day == today
+
+    if is_free_day:
+        remaining_min = float(limit_min)  # show full limit as remaining
+    else:
+        remaining_min = max(0.0, limit_min - used_min)
 
     return TimeStatusResponse(
         limit_min=limit_min,
         used_min=round(used_min, 1),
         remaining_min=round(remaining_min, 1),
-        remaining_sec=int(remaining_min * 60),
-        exceeded=remaining_min <= 0,
+        remaining_sec=-1 if is_free_day else int(remaining_min * 60),
+        exceeded=False if is_free_day else remaining_min <= 0,
     )
 
 
@@ -856,6 +883,13 @@ def _cleanup_expired_sessions():
 def _get_remaining_seconds(child_id: int) -> int:
     """Calculate remaining watch seconds for a child today. Returns -1 if no limit."""
     tz = config.watch_limits.timezone
+    today = get_today_str(tz)
+
+    # Free day pass — unlimited
+    free_day = video_store.get_child_setting(child_id, "free_day_date", "")
+    if free_day == today:
+        return -1
+
     limit_str = video_store.get_child_setting(child_id, "daily_limit_minutes", "")
     if not limit_str:
         limit_min = config.watch_limits.daily_limit_minutes
@@ -865,7 +899,6 @@ def _get_remaining_seconds(child_id: int) -> int:
     if limit_min == 0:
         return -1
 
-    today = get_today_str(tz)
     bounds = get_day_utc_bounds(today, tz)
     used_min = video_store.get_daily_watch_minutes(child_id, today, utc_bounds=bounds)
     remaining = max(0.0, limit_min - used_min)

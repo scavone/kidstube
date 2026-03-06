@@ -675,3 +675,91 @@ class TestStarterChannelsEndpoint:
         assert by_name["Kurzgesagt \u2013 In a Nutshell"]["category"] == "edu"
         assert by_name["Bluey"]["category"] == "fun"
         assert by_name["Mark Rober"]["category"] == "edu"  # science -> edu
+
+
+class TestCatalogSortOptions:
+    """Tests for catalog sort_by parameter (#22)."""
+
+    def _setup_catalog(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid_aaa0001", "Zebra Video", "B Channel", published_at=100)
+        store.add_video("vid_bbb0002", "Apple Video", "A Channel", published_at=300)
+        store.add_video("vid_ccc0003", "Mango Video", "C Channel", published_at=200)
+        for vid in ["vid_aaa0001", "vid_bbb0002", "vid_ccc0003"]:
+            store.request_video(child["id"], vid)
+            store.update_video_status(child["id"], vid, "approved")
+        return child
+
+    def test_sort_newest(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&sort_by=newest", headers=auth_headers)
+        videos = resp.json()["videos"]
+        assert videos[0]["video_id"] == "vid_bbb0002"  # published_at=300
+
+    def test_sort_oldest(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&sort_by=oldest", headers=auth_headers)
+        videos = resp.json()["videos"]
+        assert videos[0]["video_id"] == "vid_aaa0001"  # published_at=100
+
+    def test_sort_title(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&sort_by=title", headers=auth_headers)
+        videos = resp.json()["videos"]
+        assert videos[0]["title"] == "Apple Video"
+        assert videos[-1]["title"] == "Zebra Video"
+
+    def test_sort_channel(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&sort_by=channel", headers=auth_headers)
+        videos = resp.json()["videos"]
+        assert videos[0]["channel_name"] == "A Channel"
+        assert videos[-1]["channel_name"] == "C Channel"
+
+    def test_sort_default_is_newest(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1", headers=auth_headers)
+        videos = resp.json()["videos"]
+        assert videos[0]["video_id"] == "vid_bbb0002"
+
+    def test_sort_invalid_returns_400(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get("/api/catalog?child_id=1&sort_by=invalid", headers=auth_headers)
+        assert resp.status_code == 400
+
+
+class TestFreeDayAPI:
+    """Tests for free day pass via API (#32)."""
+
+    def test_free_day_unlimited_remaining(self, client, auth_headers, store, cfg):
+        from utils import get_today_str
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+
+        # Set free day to today
+        tz = cfg.watch_limits.timezone
+        today = get_today_str(tz)
+        store.set_child_setting(child["id"], "free_day_date", today)
+
+        resp = client.get("/api/time-status?child_id=1", headers=auth_headers)
+        data = resp.json()
+        assert data["remaining_sec"] == -1
+        assert data["exceeded"] is False
+
+    def test_no_free_day_normal_limits(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+
+        resp = client.get("/api/time-status?child_id=1", headers=auth_headers)
+        data = resp.json()
+        assert data["remaining_sec"] > 0
+        assert data["limit_min"] == 60
+
+    def test_expired_free_day_not_active(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_setting(child["id"], "daily_limit_minutes", "60")
+        store.set_child_setting(child["id"], "free_day_date", "2020-01-01")
+
+        resp = client.get("/api/time-status?child_id=1", headers=auth_headers)
+        data = resp.json()
+        assert data["remaining_sec"] > 0  # Not unlimited

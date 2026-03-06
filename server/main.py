@@ -10,6 +10,8 @@ import uvicorn
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
@@ -76,6 +78,8 @@ def create_app(cfg=None) -> FastAPI:
 
     app = FastAPI(title=cfg.app_name, lifespan=lifespan)
     app.state.api_key = cfg.api_key
+    app.state.limiter = api_routes.limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     app.include_router(api_routes.router)
     app.include_router(api_routes.public_router)
