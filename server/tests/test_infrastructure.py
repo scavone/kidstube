@@ -1,12 +1,11 @@
 """
 Phase 1: Infrastructure tests.
 
-Validates that the project structure, Docker Compose configuration,
+Validates that the project structure, Dockerfile,
 and environment variable setup are correct and consistent.
 """
 
 import os
-import yaml
 import pytest
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -15,9 +14,6 @@ SERVER_ROOT = os.path.join(PROJECT_ROOT, "server")
 
 class TestProjectStructure:
     """Verify the expected directory and file layout exists."""
-
-    def test_docker_compose_exists(self):
-        assert os.path.isfile(os.path.join(PROJECT_ROOT, "docker-compose.yml"))
 
     def test_env_example_exists(self):
         assert os.path.isfile(os.path.join(SERVER_ROOT, ".env.example"))
@@ -44,81 +40,6 @@ class TestProjectStructure:
 
     def test_server_has_requirements(self):
         assert os.path.isfile(os.path.join(SERVER_ROOT, "requirements.txt"))
-
-
-class TestDockerCompose:
-    """Validate docker-compose.yml structure and service definitions."""
-
-    @pytest.fixture(autouse=True)
-    def load_compose(self):
-        compose_path = os.path.join(PROJECT_ROOT, "docker-compose.yml")
-        with open(compose_path) as f:
-            self.compose = yaml.safe_load(f)
-
-    def test_has_services_key(self):
-        assert "services" in self.compose
-
-    def test_required_services_defined(self):
-        expected = ["invidious", "invidious-db", "companion", "brainrotguard", "atvloadly"]
-        for svc in expected:
-            assert svc in self.compose["services"], f"Missing service: {svc}"
-
-    def test_invidious_port_mapping(self):
-        ports = self.compose["services"]["invidious"]["ports"]
-        assert "3000:3000" in ports
-
-    def test_brainrotguard_port_mapping(self):
-        ports = self.compose["services"]["brainrotguard"]["ports"]
-        assert "8080:8080" in ports
-
-    def test_atvloadly_port_mapping(self):
-        ports = self.compose["services"]["atvloadly"]["ports"]
-        assert "5533:80" in ports
-
-    def test_brainrotguard_depends_on_invidious(self):
-        deps = self.compose["services"]["brainrotguard"]["depends_on"]
-        assert "invidious" in deps
-
-    def test_invidious_depends_on_db_and_companion(self):
-        deps = self.compose["services"]["invidious"]["depends_on"]
-        assert "invidious-db" in deps
-        assert "companion" in deps
-
-    def test_brainrotguard_builds_from_server_dir(self):
-        assert self.compose["services"]["brainrotguard"]["build"] == "./server"
-
-    def test_invidious_local_mode_enabled(self):
-        config_str = self.compose["services"]["invidious"]["environment"]["INVIDIOUS_CONFIG"]
-        assert "local: true" in config_str
-
-    def test_brainrotguard_env_has_invidious_url(self):
-        env_list = self.compose["services"]["brainrotguard"]["environment"]
-        invidious_url_found = any("BRG_INVIDIOUS_URL=http://invidious:3000" in e for e in env_list)
-        assert invidious_url_found, "BRG_INVIDIOUS_URL should point to invidious service"
-
-    def test_brainrotguard_env_has_app_name(self):
-        env_list = self.compose["services"]["brainrotguard"]["environment"]
-        app_name_found = any("BRG_APP_NAME" in e for e in env_list)
-        assert app_name_found, "BRG_APP_NAME should be configurable"
-
-    def test_all_services_on_brg_network(self):
-        for name, svc in self.compose["services"].items():
-            networks = svc.get("networks", [])
-            assert "brg" in networks, f"Service {name} is not on the 'brg' network"
-
-    def test_volumes_defined(self):
-        expected_volumes = ["invidious-db", "brg-db", "atvloadly-data"]
-        for vol in expected_volumes:
-            assert vol in self.compose["volumes"], f"Missing volume: {vol}"
-
-    def test_brg_network_defined(self):
-        assert "brg" in self.compose["networks"]
-
-    def test_invidious_has_healthcheck(self):
-        assert "healthcheck" in self.compose["services"]["invidious"]
-
-    def test_postgres_has_healthcheck(self):
-        assert "healthcheck" in self.compose["services"]["invidious-db"]
 
 
 class TestEnvExample:
