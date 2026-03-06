@@ -198,3 +198,109 @@ class TestGetVideo:
             result = await client.get_video("nonexistent1")
 
         assert result is None
+
+
+class TestExtractAudioLang:
+    def test_extracts_from_xtags_original(self, client):
+        fmt = {"url": "http://example.com/audio?xtags=acont%3Doriginal%3Alang%3Den"}
+        assert client._extract_audio_lang(fmt) == "en"
+
+    def test_extracts_from_xtags_dubbed(self, client):
+        fmt = {"url": "http://example.com/audio?xtags=acont%3Ddubbed%3Alang%3Des-419"}
+        assert client._extract_audio_lang(fmt) == "es-419"
+
+    def test_extracts_from_audio_track_field(self, client):
+        fmt = {"url": "http://example.com/audio", "audioTrack": {"id": "ja.1"}}
+        assert client._extract_audio_lang(fmt) == "ja"
+
+    def test_audio_track_takes_priority_over_xtags(self, client):
+        fmt = {
+            "url": "http://example.com/audio?xtags=acont%3Doriginal%3Alang%3Den",
+            "audioTrack": {"id": "fr.1"},
+        }
+        assert client._extract_audio_lang(fmt) == "fr"
+
+    def test_returns_empty_when_no_lang_data(self, client):
+        fmt = {"url": "http://example.com/audio?itag=140"}
+        assert client._extract_audio_lang(fmt) == ""
+
+    def test_returns_empty_for_empty_url(self, client):
+        fmt = {"url": ""}
+        assert client._extract_audio_lang(fmt) == ""
+
+
+class TestPickBestAdaptivePair:
+    def _make_video_fmt(self, height=720, bitrate=2000000):
+        return {
+            "type": 'video/mp4; codecs="avc1.4d401f"',
+            "url": f"http://example.com/video?height={height}",
+            "resolution": f"{height}p",
+            "bitrate": str(bitrate),
+        }
+
+    def _make_audio_fmt(self, lang="", bitrate=128000, dubbed=False):
+        acont = "dubbed" if dubbed else "original"
+        xtags = f"acont={acont}:lang={lang}" if lang else ""
+        url = f"http://example.com/audio?bitrate={bitrate}"
+        if xtags:
+            from urllib.parse import quote
+            url += f"&xtags={quote(xtags, safe='')}"
+        return {
+            "type": 'audio/mp4; codecs="mp4a.40.2"',
+            "url": url,
+            "bitrate": str(bitrate),
+        }
+
+    def test_selects_preferred_language(self, client):
+        formats = [
+            self._make_video_fmt(),
+            self._make_audio_fmt(lang="es-419", bitrate=128000, dubbed=True),
+            self._make_audio_fmt(lang="en", bitrate=128000),
+            self._make_audio_fmt(lang="ja", bitrate=128000, dubbed=True),
+        ]
+        pair = client.pick_best_adaptive_pair(formats, preferred_lang="en")
+        assert pair is not None
+        assert "lang%3Den" in pair[1]
+
+    def test_prefix_matches_regional_variants(self, client):
+        formats = [
+            self._make_video_fmt(),
+            self._make_audio_fmt(lang="es-419", bitrate=128000, dubbed=True),
+            self._make_audio_fmt(lang="es-MX", bitrate=96000, dubbed=True),
+            self._make_audio_fmt(lang="en", bitrate=128000),
+        ]
+        pair = client.pick_best_adaptive_pair(formats, preferred_lang="es")
+        assert pair is not None
+        # Should pick highest bitrate es variant (es-419 at 128k)
+        assert "es-419" in pair[1] or "es-MX" in pair[1]
+
+    def test_falls_back_when_no_lang_match(self, client):
+        formats = [
+            self._make_video_fmt(),
+            self._make_audio_fmt(lang="ja", bitrate=128000, dubbed=True),
+            self._make_audio_fmt(lang="es", bitrate=96000, dubbed=True),
+        ]
+        pair = client.pick_best_adaptive_pair(formats, preferred_lang="en")
+        # Should still return a pair (fallback to all tracks)
+        assert pair is not None
+        # Should pick highest bitrate (ja at 128k)
+        assert "ja" in pair[1]
+
+    def test_no_lang_filter_when_empty_preferred(self, client):
+        formats = [
+            self._make_video_fmt(),
+            self._make_audio_fmt(lang="en", bitrate=96000),
+            self._make_audio_fmt(lang="ja", bitrate=128000, dubbed=True),
+        ]
+        pair = client.pick_best_adaptive_pair(formats, preferred_lang="")
+        assert pair is not None
+        # Without preference, picks highest bitrate (ja at 128k)
+        assert "ja" in pair[1]
+
+    def test_works_with_single_track_no_lang(self, client):
+        formats = [
+            self._make_video_fmt(),
+            self._make_audio_fmt(lang="", bitrate=128000),
+        ]
+        pair = client.pick_best_adaptive_pair(formats, preferred_lang="en")
+        assert pair is not None

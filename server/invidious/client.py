@@ -6,6 +6,7 @@ and stream URL resolution goes through a local Invidious instance.
 
 import logging
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
 
 import httpx
 
@@ -149,9 +150,7 @@ class InvidiousClient:
             if not url:
                 continue
             bitrate = int(fmt.get("bitrate", 0) or 0)
-            # Extract language from audioTrack field (e.g. {"id": "en.1", ...})
-            track = fmt.get("audioTrack") or {}
-            lang = track.get("id", "").split(".")[0] if track.get("id") else ""
+            lang = self._extract_audio_lang(fmt)
             audio_streams.append({"url": url, "bitrate": bitrate, "lang": lang})
 
         if not audio_streams:
@@ -159,20 +158,55 @@ class InvidiousClient:
 
         # Filter by preferred language if configured
         if preferred_lang:
-            lang_match = [s for s in audio_streams if s["lang"] == preferred_lang]
+            available_langs = {s["lang"] for s in audio_streams if s["lang"]}
+            # Match base language code (e.g. "en" matches "en", "es" matches "es-419")
+            lang_match = [
+                s for s in audio_streams
+                if s["lang"] == preferred_lang
+                or s["lang"].startswith(preferred_lang + "-")
+            ]
             if lang_match:
                 audio_streams = lang_match
+                logger.info("Audio language filter: selected %s (available: %s)",
+                            preferred_lang, ", ".join(sorted(available_langs)) or "unknown")
+            elif available_langs:
+                logger.warning("Audio language filter: preferred %r not found (available: %s), using default",
+                               preferred_lang, ", ".join(sorted(available_langs)))
 
         audio_streams.sort(key=lambda s: s["bitrate"], reverse=True)
         best_audio = audio_streams[0]
 
         logger.info(
-            "Adaptive pair: %dp video (%dkbps) + %dkbps audio",
+            "Adaptive pair: %dp video (%dkbps) + %dkbps audio (lang=%s)",
             best_video["height"],
             best_video["bitrate"] // 1000,
             best_audio["bitrate"] // 1000,
+            best_audio["lang"] or "unknown",
         )
         return (best_video["url"], best_audio["url"])
+
+    @staticmethod
+    def _extract_audio_lang(fmt: dict) -> str:
+        """Extract language code from an adaptive audio format.
+
+        Checks (in order):
+        1. audioTrack.id field (e.g. {"id": "en.1"} -> "en")
+        2. URL xtags parameter (e.g. xtags=acont=original:lang=en -> "en")
+        """
+        # 1. Try audioTrack metadata (some Invidious versions include this)
+        track = fmt.get("audioTrack") or {}
+        if track.get("id"):
+            return track["id"].split(".")[0]
+
+        # 2. Parse from URL xtags (Invidious encodes lang here for multi-audio videos)
+        url = fmt.get("url", "")
+        if url:
+            qs = parse_qs(urlparse(url).query)
+            for xtag in qs.get("xtags", []):
+                for part in xtag.split(":"):
+                    if part.startswith("lang="):
+                        return part[5:]
+        return ""
 
     async def get_channel_videos(
         self, channel_id: str, continuation: str = ""
