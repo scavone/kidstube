@@ -8,8 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		009A8D29D3300149AF3AE3D8 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938C415755895C049FA2E79F /* PlayerView.swift */; };
+		0BB7FF2E5D4FB17D66200C89 /* ChannelDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1E5681F46B78AEB2C356FAC /* ChannelDetailView.swift */; };
 		0FBFBBE4462308DBBE42BDEB /* TimeBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AEC626AEF1ABEA4CD02E20 /* TimeBadge.swift */; };
 		15B22913202F07EE360413E3 /* VideoCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B07F3A96BBD823D62CCBC29F /* VideoCard.swift */; };
+		1D581FA6A171DDCB06EA4150 /* ChannelCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36915EFA6900A27429E58E08 /* ChannelCard.swift */; };
 		44C8517A72A3920CD9659F1B /* Video.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6980148DEA0FB0DDEF91F68 /* Video.swift */; };
 		46FD2CC7964399CC1E8EAD2E /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCE7EDC4D8FC5F0A183F282C /* SearchResult.swift */; };
 		47ED0B981661351785623F11 /* TimeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CCC9AA078FCA1842183EB37 /* TimeStatus.swift */; };
@@ -49,6 +51,7 @@
 		0A69925AF8BB02374AE088A7 /* ProfilePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePickerView.swift; sourceTree = "<group>"; };
 		173969E802F4428A9502BE17 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		23EB740E49D4C98D7F1F6154 /* ConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigTests.swift; sourceTree = "<group>"; };
+		36915EFA6900A27429E58E08 /* ChannelCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelCard.swift; sourceTree = "<group>"; };
 		47DB79B1757870A990CD2FB5 /* SearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultsView.swift; sourceTree = "<group>"; };
 		48F3BE9052C4FDA632DD4069 /* PlayerOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerOverlayView.swift; sourceTree = "<group>"; };
 		49608DEA95FF6F9B4CDF350F /* DeniedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeniedView.swift; sourceTree = "<group>"; };
@@ -66,13 +69,13 @@
 		B07F3A96BBD823D62CCBC29F /* VideoCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoCard.swift; sourceTree = "<group>"; };
 		B3471996C07E3CAAD366459B /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
 		B3AEC626AEF1ABEA4CD02E20 /* TimeBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeBadge.swift; sourceTree = "<group>"; };
+		C1E5681F46B78AEB2C356FAC /* ChannelDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelDetailView.swift; sourceTree = "<group>"; };
 		CB544BFD4F2352C926B595AE /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		D069EDA4928ADB426A9F076B /* APIResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIResponses.swift; sourceTree = "<group>"; };
 		EA48A97128F594BFBE610670 /* KidsTube.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KidsTube.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F8FF22F8D0FB28ABC4FCAFE8 /* PendingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingView.swift; sourceTree = "<group>"; };
 		FCE7EDC4D8FC5F0A183F282C /* SearchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResult.swift; sourceTree = "<group>"; };
 		FD7275D4A1ABCA1AAC35B4DE /* ChildProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChildProfile.swift; sourceTree = "<group>"; };
-		AAAA000000000000SECRETS01 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -89,7 +92,6 @@
 		0AC8D26354B17EA462692BE5 = {
 			isa = PBXGroup;
 			children = (
-				AAAA000000000000SECRETS01 /* Secrets.xcconfig */,
 				022003F81C1CA2057FEE6BBD /* Assets.xcassets */,
 				8686E5A5E30C9B183FDDA989 /* Sources */,
 				E992751EA9F34D93C6BB7980 /* Tests */,
@@ -134,6 +136,7 @@
 		58AEAE8EE03C4301DB291991 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				738A763654FC67ED93F608B6 /* Channel */,
 				F15CED7B6234E152C4A524B4 /* Components */,
 				177DF4EEE7D6EF1D0D0501E1 /* Denied */,
 				CF31636188BD5E429B8F0E20 /* Home */,
@@ -144,6 +147,14 @@
 				F64EED6E5A42BC4809F98462 /* TimesUp */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		738A763654FC67ED93F608B6 /* Channel */ = {
+			isa = PBXGroup;
+			children = (
+				C1E5681F46B78AEB2C356FAC /* ChannelDetailView.swift */,
+			);
+			path = Channel;
 			sourceTree = "<group>";
 		};
 		751A53864843314F4802D958 /* Models */ = {
@@ -216,6 +227,7 @@
 		F15CED7B6234E152C4A524B4 /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				36915EFA6900A27429E58E08 /* ChannelCard.swift */,
 				B3AEC626AEF1ABEA4CD02E20 /* TimeBadge.swift */,
 				B07F3A96BBD823D62CCBC29F /* VideoCard.swift */,
 			);
@@ -327,6 +339,8 @@
 			files = (
 				C8F5554277897C6452767ADC /* APIClient.swift in Sources */,
 				8503682CCA8A48E192875195 /* APIResponses.swift in Sources */,
+				1D581FA6A171DDCB06EA4150 /* ChannelCard.swift in Sources */,
+				0BB7FF2E5D4FB17D66200C89 /* ChannelDetailView.swift in Sources */,
 				94EA5FAAD36DC39387B3D7ED /* ChildProfile.swift in Sources */,
 				EC032307074C64B960EE244B /* Config.swift in Sources */,
 				E9B2B05685310772D8C14825 /* ContentView.swift in Sources */,
@@ -361,7 +375,6 @@
 /* Begin XCBuildConfiguration section */
 		26389555AA3FC8B2279F0230 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AAAA000000000000SECRETS01 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
@@ -381,7 +394,6 @@
 		};
 		36DEC0845D453959DBC06A00 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AAAA000000000000SECRETS01 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
