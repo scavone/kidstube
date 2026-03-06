@@ -250,7 +250,7 @@ class TestSearchEndpoint:
         store.add_child("Alex")
 
         mock_results = [
-            {"video_id": "vid1", "title": "Result", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "vid1", "title": "Result", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0}
         ]
 
@@ -267,9 +267,9 @@ class TestSearchEndpoint:
         store.add_channel(child["id"], "Bad Channel", "blocked")
 
         mock_results = [
-            {"video_id": "v1", "title": "Good", "channel_name": "Good Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "Good", "channel_name": "Good Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0},
-            {"video_id": "v2", "title": "Bad", "channel_name": "Bad Channel", "channel_id": "UC2",
+            {"type": "video", "video_id": "v2", "title": "Bad", "channel_name": "Bad Channel", "channel_id": "UC2",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0},
         ]
 
@@ -285,9 +285,9 @@ class TestSearchEndpoint:
         store.add_word_filter("badword")
 
         mock_results = [
-            {"video_id": "v1", "title": "Contains badword here", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "Contains badword here", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0},
-            {"video_id": "v2", "title": "Clean title", "channel_name": "Ch", "channel_id": "UC2",
+            {"type": "video", "video_id": "v2", "title": "Clean title", "channel_name": "Ch", "channel_id": "UC2",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0},
         ]
 
@@ -297,6 +297,74 @@ class TestSearchEndpoint:
         results = resp.json()["results"]
         assert len(results) == 1
         assert results[0]["video_id"] == "v2"
+
+    def test_search_returns_channels(self, client, auth_headers, store, mock_invidious):
+        store.add_child("Alex")
+
+        mock_results = [
+            {"type": "video", "video_id": "v1", "title": "Video", "channel_name": "Ch", "channel_id": "UC1",
+             "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0},
+            {"type": "channel", "channel_id": "UC_TEST", "name": "Test Channel",
+             "thumbnail_url": "http://thumb.jpg", "subscriber_count": 5000, "video_count": 100},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results):
+            resp = client.get("/api/search?q=test&child_id=1", headers=auth_headers)
+
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert len(results) == 2
+        assert results[0]["type"] == "video"
+        assert results[0]["video_id"] == "v1"
+        assert results[1]["type"] == "channel"
+        assert results[1]["channel_id"] == "UC_TEST"
+        assert results[1]["name"] == "Test Channel"
+
+    def test_search_filters_blocked_channel_results(self, client, auth_headers, store, mock_invidious):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Bad Channel", "blocked")
+
+        mock_results = [
+            {"type": "channel", "channel_id": "UC_GOOD", "name": "Good Channel",
+             "thumbnail_url": None, "subscriber_count": 100, "video_count": 10},
+            {"type": "channel", "channel_id": "UC_BAD", "name": "Bad Channel",
+             "thumbnail_url": None, "subscriber_count": 200, "video_count": 20},
+        ]
+
+        with patch.object(mock_invidious, "search", new_callable=AsyncMock, return_value=mock_results):
+            resp = client.get("/api/search?q=test&child_id=1", headers=auth_headers)
+
+        results = resp.json()["results"]
+        assert len(results) == 1
+        assert results[0]["name"] == "Good Channel"
+
+
+class TestChannelVideosEndpoint:
+    def test_channel_videos(self, client, auth_headers, store, mock_invidious):
+        store.add_child("Alex")
+
+        mock_videos = [
+            {"video_id": "v1", "title": "Video 1", "channel_name": "Ch", "channel_id": "UC1234567890abcdefghijkl",
+             "thumbnail_url": None, "duration": 120, "published": 0, "view_count": 0},
+        ]
+
+        with patch.object(mock_invidious, "get_channel_videos", new_callable=AsyncMock, return_value=mock_videos):
+            resp = client.get("/api/channel/UC1234567890abcdefghijkl/videos?child_id=1", headers=auth_headers)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["channel_id"] == "UC1234567890abcdefghijkl"
+        assert len(data["videos"]) == 1
+        assert data["videos"][0]["video_id"] == "v1"
+
+    def test_channel_videos_invalid_id(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get("/api/channel/invalid/videos?child_id=1", headers=auth_headers)
+        assert resp.status_code == 400
+
+    def test_channel_videos_child_not_found(self, client, auth_headers):
+        resp = client.get("/api/channel/UC1234567890abcdefghijkl/videos?child_id=999", headers=auth_headers)
+        assert resp.status_code == 404
 
 
 class TestRequestEndpoint:
@@ -527,10 +595,10 @@ class TestFamilyFriendlyFilter:
         store.add_child("Alex")
 
         mock_results = [
-            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": True},
-            {"video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
+            {"type": "video", "video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": False},
         ]
@@ -546,7 +614,7 @@ class TestFamilyFriendlyFilter:
         store.add_child("Alex")
 
         mock_results = [
-            {"video_id": "v1", "title": "No field", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "No field", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0},
         ]
 
@@ -773,7 +841,7 @@ class TestFamilySafeFilter:
         child = store.add_child("Alex")
 
         mock_results = [
-            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": True},
         ]
@@ -792,10 +860,10 @@ class TestFamilySafeFilter:
         store.set_child_setting(child["id"], "family_safe_filter", "off")
 
         mock_results = [
-            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": True},
-            {"video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
+            {"type": "video", "video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": False},
         ]
@@ -817,10 +885,10 @@ class TestFamilySafeFilter:
         # Default is on
 
         mock_results = [
-            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": True},
-            {"video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
+            {"type": "video", "video_id": "v2", "title": "Unsafe", "channel_name": "Ch", "channel_id": "UC2",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": False},
         ]
@@ -839,7 +907,7 @@ class TestFamilySafeFilter:
         assert store.get_child_setting(child["id"], "family_safe_filter", "on") == "on"
 
         mock_results = [
-            {"video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
+            {"type": "video", "video_id": "v1", "title": "Safe", "channel_name": "Ch", "channel_id": "UC1",
              "thumbnail_url": None, "duration": 100, "published": 0, "view_count": 0,
              "is_family_friendly": True},
         ]

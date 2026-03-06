@@ -185,47 +185,49 @@ async def search_videos(
     family_safe_setting = video_store.get_child_setting(child_id, "family_safe_filter", "on")
     family_safe_on = family_safe_setting != "off"
 
-    results = await invidious_client.search(
+    raw_results = await invidious_client.search(
         q, max_results=config.invidious.search_max_results, family_safe=family_safe_on
     )
 
-    # Client-side safety net: also filter non-family-friendly results when filter is on
-    if family_safe_on:
-        results = [r for r in results if r.get("is_family_friendly", True) is not False]
-
-    # Filter blocked channels (per-child)
     blocked = video_store.get_blocked_channels_set(child_id)
-    if blocked:
-        results = [r for r in results if r.get("channel_name", "").lower() not in blocked]
 
-    # Filter blocked words in titles
-    if word_patterns:
-        results = [
-            r for r in results
-            if not any(p.search(r.get("title", "")) for p in word_patterns)
-        ]
+    results = []
+    for r in raw_results:
+        if r.get("type") == "channel":
+            # Filter blocked channels
+            if blocked and r.get("name", "").lower() in blocked:
+                continue
+            results.append(r)
 
-    # Annotate each result with the child's access status.
-    # For allowed-channel videos without an existing record, auto-approve them
-    # so the child sees "Watch" instead of "Request".
-    for r in results:
-        vid = r.get("video_id", "")
-        status = video_store.get_video_status(child_id, vid)
-        if status is None:
-            ch_name = r.get("channel_name", "")
-            if ch_name and video_store.is_channel_allowed(child_id, ch_name):
-                video_store.add_video(
-                    video_id=vid,
-                    title=r.get("title", ""),
-                    channel_name=ch_name,
-                    channel_id=r.get("channel_id"),
-                    thumbnail_url=r.get("thumbnail_url"),
-                    duration=r.get("duration"),
-                    published_at=r.get("published"),
-                )
-                video_store.request_video(child_id, vid)  # auto-approves
-                status = "approved"
-        r["access_status"] = status  # None, 'pending', 'approved', 'denied'
+        elif r.get("type") == "video":
+            # Client-side safety net: filter non-family-friendly when filter is on
+            if family_safe_on and r.get("is_family_friendly", True) is False:
+                continue
+            # Filter blocked channels
+            if blocked and r.get("channel_name", "").lower() in blocked:
+                continue
+            # Filter blocked words in titles
+            if word_patterns and any(p.search(r.get("title", "")) for p in word_patterns):
+                continue
+            # Annotate with child's access status; auto-approve allowed-channel videos
+            vid = r.get("video_id", "")
+            status = video_store.get_video_status(child_id, vid)
+            if status is None:
+                ch_name = r.get("channel_name", "")
+                if ch_name and video_store.is_channel_allowed(child_id, ch_name):
+                    video_store.add_video(
+                        video_id=vid,
+                        title=r.get("title", ""),
+                        channel_name=ch_name,
+                        channel_id=r.get("channel_id"),
+                        thumbnail_url=r.get("thumbnail_url"),
+                        duration=r.get("duration"),
+                        published_at=r.get("published"),
+                    )
+                    video_store.request_video(child_id, vid)  # auto-approves
+                    status = "approved"
+            r["access_status"] = status  # None, 'pending', 'approved', 'denied'
+            results.append(r)
 
     video_store.record_search(q, child_id, len(results))
     return {"results": results, "query": q}
@@ -481,6 +483,48 @@ async def list_channels(child_id: int = Query(..., gt=0)):
         raise HTTPException(status_code=404, detail="Child not found")
     channels = video_store.get_channels(child_id, status="allowed")
     return {"channels": channels}
+
+
+# ── Channel Videos ─────────────────────────────────────────────────
+
+CHANNEL_ID_RE = re.compile(r"^UC[a-zA-Z0-9_-]{22}$")
+
+
+@router.get("/channel/{channel_id}/videos")
+async def get_channel_videos(
+    channel_id: str,
+    child_id: int = Query(..., gt=0),
+):
+    if not CHANNEL_ID_RE.match(channel_id):
+        raise HTTPException(status_code=400, detail="Invalid channel ID format")
+
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    videos = await invidious_client.get_channel_videos(channel_id)
+
+    # Annotate each video with the child's access status
+    for v in videos:
+        vid = v.get("video_id", "")
+        status = video_store.get_video_status(child_id, vid)
+        if status is None:
+            ch_name = v.get("channel_name", "")
+            if ch_name and video_store.is_channel_allowed(child_id, ch_name):
+                video_store.add_video(
+                    video_id=vid,
+                    title=v.get("title", ""),
+                    channel_name=ch_name,
+                    channel_id=v.get("channel_id"),
+                    thumbnail_url=v.get("thumbnail_url"),
+                    duration=v.get("duration"),
+                    published_at=v.get("published"),
+                )
+                video_store.request_video(child_id, vid)
+                status = "approved"
+        v["access_status"] = status
+
+    return {"videos": videos, "channel_id": channel_id}
 
 
 # ── Starter Channels (Onboarding) ──────────────────────────────────

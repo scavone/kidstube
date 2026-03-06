@@ -204,13 +204,14 @@ struct SearchResultTests {
         #expect(!noStatus.isPending)
     }
 
-    @Test("Decode search response with multiple results")
+    @Test("Decode search response with videos and channels")
     func decodeSearchResponse() throws {
         let json = """
         {
             "results": [
-                {"video_id":"a","title":"V1","channel_name":"C1","duration":60},
-                {"video_id":"b","title":"V2","channel_name":"C2","duration":120}
+                {"type":"video","video_id":"a","title":"V1","channel_name":"C1","duration":60},
+                {"type":"channel","channel_id":"UC1234","name":"Cool Channel","subscriber_count":5000,"video_count":100},
+                {"type":"video","video_id":"b","title":"V2","channel_name":"C2","duration":120}
             ],
             "query": "test search"
         }
@@ -218,8 +219,47 @@ struct SearchResultTests {
 
         let response = try JSONDecoder().decode(SearchResponse.self, from: json)
         #expect(response.query == "test search")
-        #expect(response.results.count == 2)
-        #expect(response.results[0].videoId == "a")
+        #expect(response.items.count == 3)
+        // First item is a video
+        if case .video(let v) = response.items[0] {
+            #expect(v.videoId == "a")
+        } else {
+            Issue.record("Expected video at index 0")
+        }
+        // Second item is a channel
+        if case .channel(let c) = response.items[1] {
+            #expect(c.channelId == "UC1234")
+            #expect(c.name == "Cool Channel")
+            #expect(c.subscriberCount == 5000)
+        } else {
+            Issue.record("Expected channel at index 1")
+        }
+        // Third item is a video
+        if case .video(let v) = response.items[2] {
+            #expect(v.videoId == "b")
+        } else {
+            Issue.record("Expected video at index 2")
+        }
+    }
+
+    @Test("Decode search response with videos only (backward compat)")
+    func decodeSearchResponseVideosOnly() throws {
+        let json = """
+        {
+            "results": [
+                {"video_id":"a","title":"V1","channel_name":"C1","duration":60}
+            ],
+            "query": "test"
+        }
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(SearchResponse.self, from: json)
+        #expect(response.items.count == 1)
+        if case .video(let v) = response.items[0] {
+            #expect(v.videoId == "a")
+        } else {
+            Issue.record("Expected video")
+        }
     }
 
     @Test("Search result duration formatting")
@@ -228,6 +268,21 @@ struct SearchResultTests {
         #expect(result.formattedDuration == "")
         result.duration = 90
         #expect(result.formattedDuration == "1:30")
+    }
+
+    @Test("Channel search result subscriber formatting")
+    func channelSubscriberFormatting() {
+        var channel = ChannelSearchResult(channelId: "UC1", name: "Ch")
+        #expect(channel.formattedSubscriberCount == "")
+
+        channel.subscriberCount = 500
+        #expect(channel.formattedSubscriberCount == "500 subscribers")
+
+        channel.subscriberCount = 5000
+        #expect(channel.formattedSubscriberCount == "5K subscribers")
+
+        channel.subscriberCount = 1_500_000
+        #expect(channel.formattedSubscriberCount == "1.5M subscribers")
     }
 }
 

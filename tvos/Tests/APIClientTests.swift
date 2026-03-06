@@ -52,15 +52,21 @@ struct APIClientTests {
 
     // MARK: - Search
 
-    @Test("Search returns results with null access status")
+    @Test("Search returns videos and channels")
     func search() async throws {
         let client = makeClient()
         MockURLProtocol.mock(path: "/api/search", json: [
             "results": [
                 [
+                    "type": "video",
                     "video_id": "abc123", "title": "Cool Video",
                     "channel_name": "CoolChannel", "duration": 180,
                     "access_status": NSNull()
+                ],
+                [
+                    "type": "channel",
+                    "channel_id": "UC_test", "name": "Test Channel",
+                    "subscriber_count": 1000, "video_count": 50
                 ]
             ],
             "query": "cool"
@@ -68,9 +74,18 @@ struct APIClientTests {
 
         let response = try await client.search(query: "cool", childId: 1)
         #expect(response.query == "cool")
-        #expect(response.results.count == 1)
-        #expect(response.results[0].title == "Cool Video")
-        #expect(response.results[0].accessStatus == nil)
+        #expect(response.items.count == 2)
+        if case .video(let v) = response.items[0] {
+            #expect(v.title == "Cool Video")
+            #expect(v.accessStatus == nil)
+        } else {
+            Issue.record("Expected video at index 0")
+        }
+        if case .channel(let c) = response.items[1] {
+            #expect(c.name == "Test Channel")
+        } else {
+            Issue.record("Expected channel at index 1")
+        }
     }
 
     // MARK: - Video Request

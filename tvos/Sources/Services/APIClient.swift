@@ -63,12 +63,21 @@ final class APIClient: Sendable {
 
     // MARK: - Search
 
-    /// Search for videos via Invidious.
+    /// Search for videos and channels via Invidious.
     func search(query: String, childId: Int) async throws -> SearchResponse {
         return try await get("/api/search", query: [
             "q": query,
             "child_id": String(childId)
         ])
+    }
+
+    /// Fetch videos for a channel, annotated with the child's access status.
+    func getChannelVideos(channelId: String, childId: Int) async throws -> [SearchResult] {
+        let response: ChannelVideosResponse = try await get(
+            "/api/channel/\(channelId)/videos",
+            query: ["child_id": String(childId)]
+        )
+        return response.videos
     }
 
     // MARK: - Video Requests

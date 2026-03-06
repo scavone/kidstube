@@ -50,6 +50,24 @@ struct ContentView: View {
                             onRequest: { result in
                                 requestVideo(result)
                             },
+                            onBrowseChannel: { channel in
+                                screen = .channelDetail(channel: channel)
+                            },
+                            onBack: { screen = .home }
+                        )
+                    }
+
+                case .channelDetail(let channel):
+                    if let child = selectedChild {
+                        ChannelDetailView(
+                            channel: channel,
+                            child: child,
+                            onWatch: { videoId in
+                                playApprovedVideo(videoId: videoId, title: channel.name)
+                            },
+                            onRequest: { result in
+                                requestVideo(result)
+                            },
                             onBack: { screen = .home }
                         )
                     }
@@ -167,6 +185,7 @@ enum AppScreen: Equatable {
     case profilePicker
     case home
     case search(query: String)
+    case channelDetail(channel: ChannelSearchResult)
     case pending
     case denied
     case timesUp

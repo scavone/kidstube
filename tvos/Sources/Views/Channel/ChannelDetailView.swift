@@ -1,24 +1,22 @@
 import SwiftUI
 
-/// Displays search results with contextual action buttons:
-/// - Videos: "Watch" if approved, "Pending..." if awaiting, "Request" if not requested
-/// - Channels: "Browse" to view channel videos
-struct SearchResultsView: View {
-    let query: String
+/// Displays a channel's videos with the same action buttons as search results.
+/// Users can watch approved videos, request access, or go back to search.
+struct ChannelDetailView: View {
+    let channel: ChannelSearchResult
     let child: ChildProfile
     let onWatch: (String) -> Void
     let onRequest: (SearchResult) -> Void
-    let onBrowseChannel: (ChannelSearchResult) -> Void
     let onBack: () -> Void
 
-    @StateObject private var viewModel = SearchResultsViewModel()
+    @StateObject private var viewModel = ChannelDetailViewModel()
     @State private var columnCount = 4
 
-    private var resultRows: [[SearchItem]] {
+    private var videoRows: [[SearchResult]] {
         let cols = max(1, columnCount)
-        guard !viewModel.items.isEmpty else { return [] }
-        return stride(from: 0, to: viewModel.items.count, by: cols).map { start in
-            Array(viewModel.items[start..<min(start + cols, viewModel.items.count)])
+        guard !viewModel.videos.isEmpty else { return [] }
+        return stride(from: 0, to: viewModel.videos.count, by: cols).map { start in
+            Array(viewModel.videos[start..<min(start + cols, viewModel.videos.count)])
         }
     }
 
@@ -34,29 +32,28 @@ struct SearchResultsView: View {
 
                 Spacer()
 
-                Text("Results for \"\(query)\"")
-                    .font(.headline)
+                channelHeader
 
                 Spacer()
             }
             .padding(.horizontal, 60)
             .padding(.vertical, 16)
 
-            // Results
+            // Videos
             ScrollView {
                 if viewModel.isLoading {
                     ProgressView()
                         .scaleEffect(1.5)
                         .padding(60)
-                } else if viewModel.items.isEmpty {
-                    noResults
+                } else if viewModel.videos.isEmpty {
+                    noVideos
                 } else {
                     LazyVStack(spacing: 30) {
-                        ForEach(0..<resultRows.count, id: \.self) { rowIndex in
-                            let row = resultRows[rowIndex]
+                        ForEach(0..<videoRows.count, id: \.self) { rowIndex in
+                            let row = videoRows[rowIndex]
                             HStack(spacing: 30) {
-                                ForEach(row) { item in
-                                    searchItemCard(item)
+                                ForEach(row) { video in
+                                    videoCard(video)
                                 }
                                 Spacer(minLength: 0)
                             }
@@ -84,42 +81,60 @@ struct SearchResultsView: View {
             }
         }
         .task {
-            await viewModel.search(query: query, childId: child.id)
+            await viewModel.loadVideos(channelId: channel.channelId, childId: child.id)
+        }
+    }
+
+    private var channelHeader: some View {
+        HStack(spacing: 12) {
+            if let urlString = channel.thumbnailUrl, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 40, height: 40)
+                            .clipShape(Circle())
+                    } else {
+                        Circle()
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 40, height: 40)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(channel.name)
+                    .font(.headline)
+                if !channel.formattedSubscriberCount.isEmpty {
+                    Text(channel.formattedSubscriberCount)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
     }
 
     @ViewBuilder
-    private func searchItemCard(_ item: SearchItem) -> some View {
-        switch item {
-        case .video(let result):
-            videoResultCard(result)
-        case .channel(let channel):
-            channelResultCard(channel)
-        }
-    }
-
-    // MARK: - Video Card
-
-    @ViewBuilder
-    private func videoResultCard(_ result: SearchResult) -> some View {
+    private func videoCard(_ video: SearchResult) -> some View {
         VStack(spacing: 8) {
             VideoCard(
-                title: result.title,
-                channelName: result.channelName,
-                thumbnailUrl: result.thumbnailUrl,
-                duration: result.formattedDuration,
-                badge: statusBadge(result)
+                title: video.title,
+                channelName: video.channelName,
+                thumbnailUrl: video.thumbnailUrl,
+                duration: video.formattedDuration,
+                badge: statusBadge(video)
             )
 
-            actionButton(result)
+            actionButton(video)
         }
     }
 
     @ViewBuilder
-    private func actionButton(_ result: SearchResult) -> some View {
-        if result.isApproved {
+    private func actionButton(_ video: SearchResult) -> some View {
+        if video.isApproved {
             Button {
-                onWatch(result.videoId)
+                onWatch(video.videoId)
             } label: {
                 Label("Watch", systemImage: "play.fill")
                     .font(.caption)
@@ -127,7 +142,7 @@ struct SearchResultsView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.green)
-        } else if result.isPending {
+        } else if video.isPending {
             Button {} label: {
                 Label("Pending...", systemImage: "clock")
                     .font(.caption)
@@ -137,8 +152,8 @@ struct SearchResultsView: View {
             .disabled(true)
         } else {
             Button {
-                viewModel.markAsPending(videoId: result.videoId)
-                onRequest(result)
+                viewModel.markAsPending(videoId: video.videoId)
+                onRequest(video)
             } label: {
                 Label("Request", systemImage: "hand.raised")
                     .font(.caption)
@@ -148,8 +163,8 @@ struct SearchResultsView: View {
         }
     }
 
-    private func statusBadge(_ result: SearchResult) -> String? {
-        switch result.accessStatus {
+    private func statusBadge(_ video: SearchResult) -> String? {
+        switch video.accessStatus {
         case "approved": return "Approved"
         case "pending": return "Pending"
         case "denied": return "Denied"
@@ -157,40 +172,15 @@ struct SearchResultsView: View {
         }
     }
 
-    // MARK: - Channel Card
-
-    @ViewBuilder
-    private func channelResultCard(_ channel: ChannelSearchResult) -> some View {
-        VStack(spacing: 8) {
-            ChannelCard(
-                name: channel.name,
-                thumbnailUrl: channel.thumbnailUrl,
-                subscriberCount: channel.formattedSubscriberCount
-            )
-
-            Button {
-                onBrowseChannel(channel)
-            } label: {
-                Label("Browse", systemImage: "rectangle.grid.2x2")
-                    .font(.caption)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
-        }
-    }
-
-    // MARK: - Empty State
-
-    private var noResults: some View {
+    private var noVideos: some View {
         VStack(spacing: 16) {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: "play.rectangle")
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
-            Text("No results found")
+            Text("No videos found")
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("Try a different search term")
+            Text("This channel doesn't have any videos yet")
                 .font(.callout)
                 .foregroundColor(.secondary)
         }
@@ -201,8 +191,8 @@ struct SearchResultsView: View {
 // MARK: - ViewModel
 
 @MainActor
-final class SearchResultsViewModel: ObservableObject {
-    @Published var items: [SearchItem] = []
+final class ChannelDetailViewModel: ObservableObject {
+    @Published var videos: [SearchResult] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -212,12 +202,11 @@ final class SearchResultsViewModel: ObservableObject {
         self.apiClient = apiClient
     }
 
-    func search(query: String, childId: Int) async {
+    func loadVideos(channelId: String, childId: Int) async {
         isLoading = true
         errorMessage = nil
         do {
-            let response = try await apiClient.search(query: query, childId: childId)
-            items = response.items
+            videos = try await apiClient.getChannelVideos(channelId: channelId, childId: childId)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -225,13 +214,7 @@ final class SearchResultsViewModel: ObservableObject {
     }
 
     func markAsPending(videoId: String) {
-        guard let index = items.firstIndex(where: {
-            if case .video(let v) = $0 { return v.videoId == videoId }
-            return false
-        }) else { return }
-        if case .video(var result) = items[index] {
-            result.accessStatus = "pending"
-            items[index] = .video(result)
-        }
+        guard let index = videos.firstIndex(where: { $0.videoId == videoId }) else { return }
+        videos[index].accessStatus = "pending"
     }
 }

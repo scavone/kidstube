@@ -26,15 +26,16 @@ class InvidiousClient:
     async def search(
         self, query: str, max_results: int = 20, family_safe: bool = False
     ) -> list[dict]:
-        """Search for videos via Invidious.
+        """Search for videos and channels via Invidious.
 
-        Returns a list of simplified video dicts with keys:
-        video_id, title, channel_name, channel_id, thumbnail_url, duration, published
+        Returns a list of result dicts, each tagged with a "type" field:
+        - "video": video_id, title, channel_name, channel_id, thumbnail_url, duration, published
+        - "channel": channel_id, name, thumbnail_url, subscriber_count, video_count
 
         If family_safe is True, passes features=familySafe to Invidious
         for server-side filtering.
         """
-        params = {"q": query, "type": "video", "sort_by": "relevance"}
+        params = {"q": query, "sort_by": "relevance"}
         if family_safe:
             params["features"] = "familySafe"
         async with self._client() as client:
@@ -47,11 +48,16 @@ class InvidiousClient:
 
         results = []
         for item in raw_results:
-            if item.get("type") != "video":
-                continue
-            video = self._normalize_video(item)
-            if video:
-                results.append(video)
+            item_type = item.get("type")
+            if item_type == "video":
+                video = self._normalize_video(item)
+                if video:
+                    video["type"] = "video"
+                    results.append(video)
+            elif item_type == "channel":
+                channel = self._normalize_channel(item)
+                if channel:
+                    results.append(channel)
             if len(results) >= max_results:
                 break
 
@@ -269,6 +275,37 @@ class InvidiousClient:
             "handle": data.get("authorUrl", "").rstrip("/").split("/")[-1] or None,
             "subscriber_count": data.get("subCount", 0),
             "description": data.get("description", ""),
+        }
+
+    def _normalize_channel(self, item: dict) -> Optional[dict]:
+        """Convert an Invidious API channel search result to our simplified format."""
+        channel_id = item.get("authorId")
+        if not channel_id:
+            return None
+
+        thumbnails = item.get("authorThumbnails", [])
+        thumbnail_url = None
+        # Pick a medium-sized thumbnail (176px is typical for channel avatars)
+        for thumb in thumbnails:
+            width = thumb.get("width", 0)
+            if 100 <= width <= 200:
+                thumbnail_url = thumb.get("url", "")
+                break
+        if not thumbnail_url and thumbnails:
+            thumbnail_url = thumbnails[-1].get("url", "")
+
+        if thumbnail_url and thumbnail_url.startswith("//"):
+            thumbnail_url = f"https:{thumbnail_url}"
+        elif thumbnail_url and thumbnail_url.startswith("/"):
+            thumbnail_url = f"{self.base_url}{thumbnail_url}"
+
+        return {
+            "type": "channel",
+            "channel_id": channel_id,
+            "name": item.get("author", ""),
+            "thumbnail_url": thumbnail_url,
+            "subscriber_count": item.get("subCount", 0),
+            "video_count": item.get("videoCount", 0),
         }
 
     def _normalize_video(self, item: dict) -> Optional[dict]:

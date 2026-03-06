@@ -52,6 +52,60 @@ class TestNormalizeVideo:
         assert result["thumbnail_url"] == "http://test-invidious:3000/vi/test123/default.jpg"
 
 
+class TestNormalizeChannel:
+    def test_normalizes_basic_channel(self, client):
+        raw = {
+            "authorId": "UC1234567890",
+            "author": "Cool Channel",
+            "subCount": 50000,
+            "videoCount": 200,
+            "authorThumbnails": [
+                {"url": "https://thumb.example.com/small.jpg", "width": 48, "height": 48},
+                {"url": "https://thumb.example.com/medium.jpg", "width": 176, "height": 176},
+                {"url": "https://thumb.example.com/large.jpg", "width": 512, "height": 512},
+            ],
+        }
+        result = client._normalize_channel(raw)
+        assert result["type"] == "channel"
+        assert result["channel_id"] == "UC1234567890"
+        assert result["name"] == "Cool Channel"
+        assert result["subscriber_count"] == 50000
+        assert result["video_count"] == 200
+        assert result["thumbnail_url"] == "https://thumb.example.com/medium.jpg"
+
+    def test_returns_none_without_author_id(self, client):
+        assert client._normalize_channel({}) is None
+        assert client._normalize_channel({"author": "no id"}) is None
+
+    def test_protocol_relative_thumbnail(self, client):
+        raw = {
+            "authorId": "UC123",
+            "authorThumbnails": [{"url": "//i.ytimg.com/avatar.jpg", "width": 176, "height": 176}],
+        }
+        result = client._normalize_channel(raw)
+        assert result["thumbnail_url"] == "https://i.ytimg.com/avatar.jpg"
+
+    def test_relative_thumbnail_gets_absolute(self, client):
+        raw = {
+            "authorId": "UC123",
+            "authorThumbnails": [{"url": "/avatar.jpg", "width": 176, "height": 176}],
+        }
+        result = client._normalize_channel(raw)
+        assert result["thumbnail_url"] == "http://test-invidious:3000/avatar.jpg"
+
+    def test_fallback_to_last_thumbnail(self, client):
+        raw = {
+            "authorId": "UC123",
+            "authorThumbnails": [
+                {"url": "https://small.jpg", "width": 48, "height": 48},
+                {"url": "https://large.jpg", "width": 512, "height": 512},
+            ],
+        }
+        result = client._normalize_channel(raw)
+        # No thumbnail in 100-200 range, falls back to last
+        assert result["thumbnail_url"] == "https://large.jpg"
+
+
 class TestPickBestStream:
     def test_picks_highest_mp4_under_1080p(self, client):
         streams = [
@@ -88,7 +142,7 @@ class TestPickBestStream:
 
 class TestSearch:
     @pytest.mark.asyncio
-    async def test_search_returns_normalized_results(self, client):
+    async def test_search_returns_videos_and_channels(self, client):
         mock_response = [
             {
                 "type": "video",
@@ -100,6 +154,16 @@ class TestSearch:
                 "videoThumbnails": [],
             },
             {
+                "type": "channel",
+                "authorId": "UCC",
+                "author": "Cool Channel",
+                "subCount": 50000,
+                "videoCount": 200,
+                "authorThumbnails": [
+                    {"url": "https://thumb.example.com/channel.jpg", "width": 176, "height": 176}
+                ],
+            },
+            {
                 "type": "video",
                 "videoId": "vid2",
                 "title": "Result 2",
@@ -107,10 +171,6 @@ class TestSearch:
                 "authorId": "UCB",
                 "lengthSeconds": 300,
                 "videoThumbnails": [],
-            },
-            {
-                "type": "channel",  # Should be filtered out
-                "authorId": "UCC",
             },
         ]
 
@@ -126,9 +186,20 @@ class TestSearch:
         with patch.object(client, "_client", return_value=mock_client_instance):
             results = await client.search("test query")
 
-        assert len(results) == 2
+        assert len(results) == 3
+        # First result: video
+        assert results[0]["type"] == "video"
         assert results[0]["video_id"] == "vid1"
-        assert results[1]["video_id"] == "vid2"
+        # Second result: channel
+        assert results[1]["type"] == "channel"
+        assert results[1]["channel_id"] == "UCC"
+        assert results[1]["name"] == "Cool Channel"
+        assert results[1]["subscriber_count"] == 50000
+        assert results[1]["video_count"] == 200
+        assert results[1]["thumbnail_url"] == "https://thumb.example.com/channel.jpg"
+        # Third result: video
+        assert results[2]["type"] == "video"
+        assert results[2]["video_id"] == "vid2"
 
     @pytest.mark.asyncio
     async def test_search_passes_family_safe_param(self, client):

@@ -80,6 +80,18 @@ struct ChannelsResponse: Codable {
     let channels: [Channel]
 }
 
+// MARK: - Channel Videos
+
+struct ChannelVideosResponse: Codable {
+    let videos: [SearchResult]
+    let channelId: String
+
+    enum CodingKeys: String, CodingKey {
+        case videos
+        case channelId = "channel_id"
+    }
+}
+
 // MARK: - Heartbeat
 
 struct HeartbeatBody: Codable {
