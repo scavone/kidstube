@@ -78,6 +78,7 @@ class Config:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     watch_limits: WatchLimitsConfig = field(default_factory=WatchLimitsConfig)
     api_key: str = ""
+    preferred_audio_lang: str = ""
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> "Config":
@@ -95,6 +96,7 @@ class Config:
             database=DatabaseConfig(**expanded.get("database", {})),
             watch_limits=WatchLimitsConfig(**expanded.get("watch_limits", {})),
             api_key=expanded.get("api_key", ""),
+            preferred_audio_lang=expanded.get("preferred_audio_lang", ""),
         )
 
     @classmethod
@@ -126,6 +128,7 @@ class Config:
                 notify_on_limit=os.environ.get("BRG_NOTIFY_ON_LIMIT", "true").lower() == "true",
             ),
             api_key=os.environ.get("BRG_API_KEY", ""),
+            preferred_audio_lang=os.environ.get("BRG_PREFERRED_AUDIO_LANG", ""),
         )
 
 

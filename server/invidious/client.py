@@ -101,12 +101,14 @@ class InvidiousClient:
         return selected
 
     def pick_best_adaptive_pair(
-        self, adaptive_formats: list[dict]
+        self, adaptive_formats: list[dict], preferred_lang: str = ""
     ) -> Optional[tuple[str, str]]:
         """Pick the best H.264 video + AAC audio pair from adaptive formats.
 
         Returns (video_url, audio_url) or None if no suitable pair found.
         Intended for server-side remuxing via ffmpeg.
+        If preferred_lang is set (e.g. "en"), audio tracks matching that
+        language are preferred; falls back to all tracks if no match.
         """
         video_streams = []
         for fmt in adaptive_formats:
@@ -147,10 +149,19 @@ class InvidiousClient:
             if not url:
                 continue
             bitrate = int(fmt.get("bitrate", 0) or 0)
-            audio_streams.append({"url": url, "bitrate": bitrate})
+            # Extract language from audioTrack field (e.g. {"id": "en.1", ...})
+            track = fmt.get("audioTrack") or {}
+            lang = track.get("id", "").split(".")[0] if track.get("id") else ""
+            audio_streams.append({"url": url, "bitrate": bitrate, "lang": lang})
 
         if not audio_streams:
             return None
+
+        # Filter by preferred language if configured
+        if preferred_lang:
+            lang_match = [s for s in audio_streams if s["lang"] == preferred_lang]
+            if lang_match:
+                audio_streams = lang_match
 
         audio_streams.sort(key=lambda s: s["bitrate"], reverse=True)
         best_audio = audio_streams[0]

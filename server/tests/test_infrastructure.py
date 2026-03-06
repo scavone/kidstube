@@ -20,7 +20,7 @@ class TestProjectStructure:
         assert os.path.isfile(os.path.join(PROJECT_ROOT, "docker-compose.yml"))
 
     def test_env_example_exists(self):
-        assert os.path.isfile(os.path.join(PROJECT_ROOT, ".env.example"))
+        assert os.path.isfile(os.path.join(SERVER_ROOT, ".env.example"))
 
     def test_gitignore_exists(self):
         assert os.path.isfile(os.path.join(PROJECT_ROOT, ".gitignore"))
@@ -126,7 +126,7 @@ class TestEnvExample:
 
     @pytest.fixture(autouse=True)
     def load_env(self):
-        env_path = os.path.join(PROJECT_ROOT, ".env.example")
+        env_path = os.path.join(SERVER_ROOT, ".env.example")
         self.env_vars = {}
         with open(env_path) as f:
             for line in f:

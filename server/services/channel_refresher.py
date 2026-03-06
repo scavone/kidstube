@@ -35,6 +35,9 @@ async def channel_refresh_loop(
         "Channel refresh loop started (every %d hours)", interval_hours
     )
 
+    # One-time backfill of published_at for existing videos
+    await _backfill_published_at(store, inv_client)
+
     while True:
         try:
             total_imported = await _refresh_all_channels(
@@ -111,6 +114,30 @@ async def _refresh_all_channels(
         await _notify_telegram(bot, total_imported, summary_lines)
 
     return total_imported
+
+
+async def _backfill_published_at(
+    store: "VideoStore",
+    inv_client: "InvidiousClient",
+) -> None:
+    """Backfill published_at for videos that are missing it."""
+    video_ids = store.get_videos_missing_published_at(limit=200)
+    if not video_ids:
+        return
+
+    logger.info("Backfilling published_at for %d videos", len(video_ids))
+    filled = 0
+    for vid in video_ids:
+        try:
+            meta = await inv_client.get_video(vid)
+            if meta and meta.get("published"):
+                store.update_published_at(vid, meta["published"])
+                filled += 1
+        except Exception:
+            logger.debug("Failed to backfill published_at for %s", vid)
+        await asyncio.sleep(0.5)
+
+    logger.info("Backfilled published_at for %d/%d videos", filled, len(video_ids))
 
 
 async def _notify_telegram(

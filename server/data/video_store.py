@@ -54,6 +54,7 @@ class VideoStore:
                 thumbnail_url TEXT,
                 duration INTEGER,
                 category TEXT,
+                published_at INTEGER,
                 requested_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -140,6 +141,15 @@ class VideoStore:
         if "last_refreshed_at" not in columns:
             self.conn.execute(
                 "ALTER TABLE channels ADD COLUMN last_refreshed_at TEXT"
+            )
+            self.conn.commit()
+
+        # Add published_at column to videos table if missing
+        cursor = self.conn.execute("PRAGMA table_info(videos)")
+        video_columns = {row[1] for row in cursor.fetchall()}
+        if "published_at" not in video_columns:
+            self.conn.execute(
+                "ALTER TABLE videos ADD COLUMN published_at INTEGER"
             )
             self.conn.commit()
 
@@ -326,14 +336,15 @@ class VideoStore:
         thumbnail_url: Optional[str] = None,
         duration: Optional[int] = None,
         category: Optional[str] = None,
+        published_at: Optional[int] = None,
     ) -> dict:
         """Add a video to the catalog. If it already exists, return existing."""
         with self._lock:
             self.conn.execute(
                 """INSERT OR IGNORE INTO videos
-                   (video_id, title, channel_name, channel_id, thumbnail_url, duration, category)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (video_id, title, channel_name, channel_id, thumbnail_url, duration, category),
+                   (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at),
             )
             self.conn.commit()
             row = self.conn.execute(
@@ -376,8 +387,8 @@ class VideoStore:
                 cursor = self.conn.execute(
                     """INSERT OR IGNORE INTO videos
                        (video_id, title, channel_name, channel_id,
-                        thumbnail_url, duration, category)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        thumbnail_url, duration, category, published_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         vid,
                         v.get("title", ""),
@@ -386,6 +397,7 @@ class VideoStore:
                         v.get("thumbnail_url"),
                         v.get("duration"),
                         category,
+                        v.get("published") or None,
                     ),
                 )
                 if cursor.rowcount > 0:
@@ -401,6 +413,24 @@ class VideoStore:
 
             self.conn.commit()
         return inserted
+
+    def get_videos_missing_published_at(self, limit: int = 50) -> list[str]:
+        """Return video_ids that have no published_at value (for backfill)."""
+        with self._lock:
+            cursor = self.conn.execute(
+                "SELECT video_id FROM videos WHERE published_at IS NULL LIMIT ?",
+                (limit,),
+            )
+            return [row[0] for row in cursor.fetchall()]
+
+    def update_published_at(self, video_id: str, published_at: int) -> None:
+        """Set published_at for a video."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE videos SET published_at = ? WHERE video_id = ? AND published_at IS NULL",
+                (published_at, video_id),
+            )
+            self.conn.commit()
 
     # ── Per-Child Video Access ──────────────────────────────────────
 
@@ -549,7 +579,7 @@ class VideoStore:
                         ON v.channel_name = ch.channel_name COLLATE NOCASE
                         AND ch.child_id = cva.child_id
                     WHERE {where_clause}
-                    ORDER BY cva.decided_at DESC
+                    ORDER BY v.published_at IS NULL, v.published_at DESC
                     LIMIT ? OFFSET ?""",
                 params + [limit, offset],
             )
@@ -662,16 +692,43 @@ class VideoStore:
         return True
 
     def remove_channel(self, child_id: int, name_or_handle: str) -> bool:
-        """Remove a channel from a child's list by name or @handle."""
+        """Remove a channel from a child's list by name or @handle.
+
+        Also revokes (deletes) all video access entries for that channel's
+        videos so they no longer appear in the child's catalog.
+        """
         with self._lock:
-            cursor = self.conn.execute(
-                """DELETE FROM child_channels
+            # Look up the channel_name before deleting
+            row = self.conn.execute(
+                """SELECT channel_name FROM child_channels
                    WHERE child_id = ?
                      AND (channel_name = ? COLLATE NOCASE OR handle = ? COLLATE NOCASE)""",
                 (child_id, name_or_handle, name_or_handle),
+            ).fetchone()
+            if not row:
+                return False
+
+            channel_name = row[0]
+
+            # Remove video access entries for this channel's videos
+            self.conn.execute(
+                """DELETE FROM child_video_access
+                   WHERE child_id = ?
+                     AND video_id IN (
+                         SELECT video_id FROM videos
+                         WHERE channel_name = ? COLLATE NOCASE
+                     )""",
+                (child_id, channel_name),
+            )
+
+            # Remove the channel entry
+            self.conn.execute(
+                """DELETE FROM child_channels
+                   WHERE child_id = ? AND channel_name = ? COLLATE NOCASE""",
+                (child_id, channel_name),
             )
             self.conn.commit()
-            return cursor.rowcount > 0
+            return True
 
     def get_channels(self, child_id: int, status: Optional[str] = None) -> list[dict]:
         """List channels for a child, optionally filtered by status."""

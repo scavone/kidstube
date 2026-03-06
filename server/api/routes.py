@@ -197,6 +197,7 @@ async def search_videos(
                     channel_id=r.get("channel_id"),
                     thumbnail_url=r.get("thumbnail_url"),
                     duration=r.get("duration"),
+                    published_at=r.get("published"),
                 )
                 video_store.request_video(child_id, vid)  # auto-approves
                 status = "approved"
@@ -230,6 +231,7 @@ async def request_video(body: VideoRequestBody):
             channel_id=metadata.get("channel_id"),
             thumbnail_url=metadata.get("thumbnail_url"),
             duration=metadata.get("duration"),
+            published_at=metadata.get("published"),
         )
 
     status = video_store.request_video(body.child_id, body.video_id)
@@ -283,7 +285,9 @@ async def get_stream(
     # 1. Prefer HLS via ffmpeg adaptive muxing (up to 1080p)
     if _FFMPEG_PATH:
         adaptive = video.get("adaptive_formats", [])
-        pair = invidious_client.pick_best_adaptive_pair(adaptive)
+        pair = invidious_client.pick_best_adaptive_pair(
+            adaptive, preferred_lang=config.preferred_audio_lang
+        )
         if pair:
             duration = video.get("duration", 0)
             session_id = await _start_hls_session(video_id, pair, duration=duration)
