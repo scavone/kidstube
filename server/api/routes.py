@@ -169,8 +169,8 @@ async def search_videos(
 
     results = await invidious_client.search(q, max_results=config.invidious.search_max_results)
 
-    # Filter blocked channels
-    blocked = video_store.get_blocked_channels_set()
+    # Filter blocked channels (per-child)
+    blocked = video_store.get_blocked_channels_set(child_id)
     if blocked:
         results = [r for r in results if r.get("channel_name", "").lower() not in blocked]
 
@@ -189,7 +189,7 @@ async def search_videos(
         status = video_store.get_video_status(child_id, vid)
         if status is None:
             ch_name = r.get("channel_name", "")
-            if ch_name and video_store.is_channel_allowed(ch_name):
+            if ch_name and video_store.is_channel_allowed(child_id, ch_name):
                 video_store.add_video(
                     video_id=vid,
                     title=r.get("title", ""),
@@ -427,8 +427,11 @@ async def get_catalog(
 # ── Channels ────────────────────────────────────────────────────────
 
 @router.get("/channels")
-async def list_channels():
-    channels = video_store.get_channels(status="allowed")
+async def list_channels(child_id: int = Query(..., gt=0)):
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    channels = video_store.get_channels(child_id, status="allowed")
     return {"channels": channels}
 
 

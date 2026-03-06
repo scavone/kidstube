@@ -94,6 +94,19 @@ class VideoStore:
                 last_refreshed_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS child_channels (
+                child_id INTEGER NOT NULL,
+                channel_name TEXT NOT NULL COLLATE NOCASE,
+                channel_id TEXT,
+                handle TEXT,
+                status TEXT NOT NULL DEFAULT 'allowed',
+                category TEXT,
+                added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_refreshed_at TEXT,
+                PRIMARY KEY (child_id, channel_name),
+                FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS word_filters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -129,6 +142,33 @@ class VideoStore:
                 "ALTER TABLE channels ADD COLUMN last_refreshed_at TEXT"
             )
             self.conn.commit()
+
+        # Migrate global channels -> per-child channels for existing databases.
+        # Copy any global channel entries that don't yet exist in child_channels
+        # for each child, then leave the global table intact (unused going forward).
+        tables = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "child_channels" in tables:
+            children = self.conn.execute("SELECT id FROM children").fetchall()
+            global_channels = self.conn.execute("SELECT * FROM channels").fetchall()
+            if children and global_channels:
+                for child_row in children:
+                    cid = child_row[0]
+                    for ch in global_channels:
+                        self.conn.execute(
+                            """INSERT OR IGNORE INTO child_channels
+                               (child_id, channel_name, channel_id, handle, status,
+                                category, added_at, last_refreshed_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (cid, ch["channel_name"], ch["channel_id"],
+                             ch["handle"], ch["status"], ch["category"],
+                             ch["added_at"], ch["last_refreshed_at"]),
+                        )
+                self.conn.commit()
 
     # ── Child Profiles ──────────────────────────────────────────────
 
@@ -378,14 +418,14 @@ class VideoStore:
             if row:
                 return row[0]
 
-            # Check if channel is blocked
+            # Check per-child channel lists
             video = self.conn.execute(
                 "SELECT channel_name FROM videos WHERE video_id = ?", (video_id,)
             ).fetchone()
             if video:
                 blocked = self.conn.execute(
-                    "SELECT 1 FROM channels WHERE channel_name = ? COLLATE NOCASE AND status = 'blocked'",
-                    (video["channel_name"],),
+                    "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'blocked'",
+                    (child_id, video["channel_name"]),
                 ).fetchone()
                 if blocked:
                     self.conn.execute(
@@ -396,10 +436,10 @@ class VideoStore:
                     self.conn.commit()
                     return "denied"
 
-                # Check if channel is allowed -> auto-approve
+                # Check if channel is allowed for this child -> auto-approve
                 allowed = self.conn.execute(
-                    "SELECT 1 FROM channels WHERE channel_name = ? COLLATE NOCASE AND status = 'allowed'",
-                    (video["channel_name"],),
+                    "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
+                    (child_id, video["channel_name"]),
                 ).fetchone()
                 if allowed:
                     self.conn.execute(
@@ -492,7 +532,9 @@ class VideoStore:
             count_row = self.conn.execute(
                 f"""SELECT COUNT(*) FROM child_video_access cva
                     JOIN videos v ON cva.video_id = v.video_id
-                    LEFT JOIN channels ch ON v.channel_name = ch.channel_name COLLATE NOCASE
+                    LEFT JOIN child_channels ch
+                        ON v.channel_name = ch.channel_name COLLATE NOCASE
+                        AND ch.child_id = cva.child_id
                     WHERE {where_clause}""",
                 params,
             ).fetchone()
@@ -503,7 +545,9 @@ class VideoStore:
                            cva.decided_at as access_decided_at
                     FROM child_video_access cva
                     JOIN videos v ON cva.video_id = v.video_id
-                    LEFT JOIN channels ch ON v.channel_name = ch.channel_name COLLATE NOCASE
+                    LEFT JOIN child_channels ch
+                        ON v.channel_name = ch.channel_name COLLATE NOCASE
+                        AND ch.child_id = cva.child_id
                     WHERE {where_clause}
                     ORDER BY cva.decided_at DESC
                     LIMIT ? OFFSET ?""",
@@ -565,107 +609,129 @@ class VideoStore:
                 for row in cursor.fetchall()
             ]
 
-    # ── Channel Allow/Block Lists (Global) ──────────────────────────
+    # ── Channel Allow/Block Lists (Per-Child) ─────────────────────
 
     def add_channel(
-        self, name: str, status: str,
+        self, child_id: int, name: str, status: str,
         channel_id: Optional[str] = None,
         handle: Optional[str] = None,
         category: Optional[str] = None,
     ) -> bool:
-        """Add or update a channel in the allow/block list."""
+        """Add or update a channel in a child's allow/block list."""
         with self._lock:
             self.conn.execute(
-                """INSERT INTO channels (channel_name, status, channel_id, handle, category)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(channel_name) DO UPDATE SET
+                """INSERT INTO child_channels
+                   (child_id, channel_name, status, channel_id, handle, category)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(child_id, channel_name) DO UPDATE SET
                        status = ?,
                        channel_id = COALESCE(?, channel_id),
                        handle = COALESCE(?, handle),
                        category = COALESCE(?, category),
                        added_at = datetime('now')""",
-                (name, status, channel_id, handle, category, status, channel_id, handle, category),
+                (child_id, name, status, channel_id, handle, category,
+                 status, channel_id, handle, category),
             )
-            # Retroactively deny all approved/pending videos from this channel
+            # Retroactively deny all approved/pending videos from this channel for this child
             if status == "blocked":
                 self.conn.execute(
                     """UPDATE child_video_access SET status = 'denied', decided_at = datetime('now')
-                       WHERE status IN ('approved', 'pending')
+                       WHERE child_id = ? AND status IN ('approved', 'pending')
                          AND video_id IN (
                              SELECT video_id FROM videos
                              WHERE channel_name = ? COLLATE NOCASE
                          )""",
-                    (name,),
+                    (child_id, name),
                 )
             self.conn.commit()
             return True
 
-    def remove_channel(self, name_or_handle: str) -> bool:
-        """Remove a channel by name or @handle."""
+    def add_channel_for_all(
+        self, name: str, status: str,
+        channel_id: Optional[str] = None,
+        handle: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> bool:
+        """Add or update a channel for ALL children at once."""
+        children = self.get_children()
+        if not children:
+            return False
+        for child in children:
+            self.add_channel(child["id"], name, status,
+                             channel_id=channel_id, handle=handle, category=category)
+        return True
+
+    def remove_channel(self, child_id: int, name_or_handle: str) -> bool:
+        """Remove a channel from a child's list by name or @handle."""
         with self._lock:
             cursor = self.conn.execute(
-                "DELETE FROM channels WHERE channel_name = ? COLLATE NOCASE OR handle = ? COLLATE NOCASE",
-                (name_or_handle, name_or_handle),
+                """DELETE FROM child_channels
+                   WHERE child_id = ?
+                     AND (channel_name = ? COLLATE NOCASE OR handle = ? COLLATE NOCASE)""",
+                (child_id, name_or_handle, name_or_handle),
             )
             self.conn.commit()
             return cursor.rowcount > 0
 
-    def get_channels(self, status: Optional[str] = None) -> list[dict]:
-        """List channels, optionally filtered by status."""
+    def get_channels(self, child_id: int, status: Optional[str] = None) -> list[dict]:
+        """List channels for a child, optionally filtered by status."""
         with self._lock:
             if status:
                 cursor = self.conn.execute(
-                    "SELECT * FROM channels WHERE status = ? ORDER BY channel_name",
-                    (status,),
+                    "SELECT * FROM child_channels WHERE child_id = ? AND status = ? ORDER BY channel_name",
+                    (child_id, status),
                 )
             else:
                 cursor = self.conn.execute(
-                    "SELECT * FROM channels ORDER BY channel_name"
+                    "SELECT * FROM child_channels WHERE child_id = ? ORDER BY channel_name",
+                    (child_id,),
                 )
             return [dict(row) for row in cursor.fetchall()]
 
-    def is_channel_allowed(self, name: str) -> bool:
+    def is_channel_allowed(self, child_id: int, name: str) -> bool:
         with self._lock:
             row = self.conn.execute(
-                "SELECT 1 FROM channels WHERE channel_name = ? COLLATE NOCASE AND status = 'allowed'",
-                (name,),
+                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
+                (child_id, name),
             ).fetchone()
             return row is not None
 
-    def is_channel_blocked(self, name: str) -> bool:
+    def is_channel_blocked(self, child_id: int, name: str) -> bool:
         with self._lock:
             row = self.conn.execute(
-                "SELECT 1 FROM channels WHERE channel_name = ? COLLATE NOCASE AND status = 'blocked'",
-                (name,),
+                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'blocked'",
+                (child_id, name),
             ).fetchone()
             return row is not None
 
-    def get_blocked_channels_set(self) -> set[str]:
+    def get_blocked_channels_set(self, child_id: int) -> set[str]:
         with self._lock:
             cursor = self.conn.execute(
-                "SELECT channel_name FROM channels WHERE status = 'blocked'"
+                "SELECT channel_name FROM child_channels WHERE child_id = ? AND status = 'blocked'",
+                (child_id,),
             )
             return {row[0].lower() for row in cursor.fetchall()}
 
-    def get_channels_due_for_refresh(self, interval_hours: int = 6) -> list[dict]:
-        """Return allowed channels that haven't been refreshed within interval_hours."""
+    def get_channels_due_for_refresh(self, child_id: int, interval_hours: int = 6) -> list[dict]:
+        """Return allowed channels for a child that haven't been refreshed within interval_hours."""
         with self._lock:
             cursor = self.conn.execute(
-                """SELECT * FROM channels
-                   WHERE status = 'allowed' AND channel_id IS NOT NULL
+                """SELECT * FROM child_channels
+                   WHERE child_id = ? AND status = 'allowed' AND channel_id IS NOT NULL
                      AND (last_refreshed_at IS NULL
                           OR last_refreshed_at < datetime('now', ? || ' hours'))
                    ORDER BY last_refreshed_at ASC NULLS FIRST""",
-                (str(-interval_hours),),
+                (child_id, str(-interval_hours)),
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_channel_refreshed_at(self, channel_name: str) -> None:
-        """Stamp the current time as last_refreshed_at for a channel."""
+    def update_channel_refreshed_at(self, child_id: int, channel_name: str) -> None:
+        """Stamp the current time as last_refreshed_at for a child's channel."""
         with self._lock:
             self.conn.execute(
-                "UPDATE channels SET last_refreshed_at = datetime('now') WHERE channel_name = ? COLLATE NOCASE",
-                (channel_name,),
+                """UPDATE child_channels SET last_refreshed_at = datetime('now')
+                   WHERE child_id = ? AND channel_name = ? COLLATE NOCASE""",
+                (child_id, channel_name),
             )
             self.conn.commit()
 

@@ -263,8 +263,8 @@ class TestSearchEndpoint:
         assert data["results"][0]["video_id"] == "vid1"
 
     def test_search_filters_blocked_channels(self, client, auth_headers, store, mock_invidious):
-        store.add_child("Alex")
-        store.add_channel("Bad Channel", "blocked")
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Bad Channel", "blocked")
 
         mock_results = [
             {"video_id": "v1", "title": "Good", "channel_name": "Good Ch", "channel_id": "UC1",
@@ -327,8 +327,8 @@ class TestRequestEndpoint:
         assert data["status"] == "pending"
 
     def test_request_auto_approves_allowed_channel(self, client, auth_headers, store, mock_invidious):
-        store.add_child("Alex")
-        store.add_channel("Trusted Channel", "allowed")
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Trusted Channel", "allowed")
         store.add_video("abc12345678", "Video", "Trusted Channel")
 
         resp = client.post(
@@ -508,11 +508,13 @@ class TestScheduleStatusEndpoint:
 
 class TestChannelsEndpoint:
     def test_list_channels(self, client, auth_headers, store):
-        store.add_channel("Channel A", "allowed")
-        store.add_channel("Channel B", "allowed")
-        store.add_channel("Blocked", "blocked")
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Channel A", "allowed")
+        store.add_channel(cid, "Channel B", "allowed")
+        store.add_channel(cid, "Blocked", "blocked")
 
-        resp = client.get("/api/channels", headers=auth_headers)
+        resp = client.get(f"/api/channels?child_id={cid}", headers=auth_headers)
         assert resp.status_code == 200
         channels = resp.json()["channels"]
         assert len(channels) == 2  # Only allowed channels

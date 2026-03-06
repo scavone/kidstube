@@ -132,9 +132,9 @@ final class APIClient: Sendable {
 
     // MARK: - Channels
 
-    /// Fetch all allowed/blocked channels.
-    func getChannels() async throws -> [Channel] {
-        let response: ChannelsResponse = try await get("/api/channels")
+    /// Fetch allowed channels for a child.
+    func getChannels(childId: Int) async throws -> [Channel] {
+        let response: ChannelsResponse = try await get("/api/channels", query: ["child_id": String(childId)])
         return response.channels
     }
 

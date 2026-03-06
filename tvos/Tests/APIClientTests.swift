@@ -196,7 +196,7 @@ struct APIClientTests {
             ]
         ])
 
-        let channels = try await client.getChannels()
+        let channels = try await client.getChannels(childId: 1)
         #expect(channels.count == 1)
         #expect(channels[0].channelName == "CrashCourse")
     }

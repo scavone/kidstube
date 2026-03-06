@@ -275,14 +275,14 @@ class TestChildVideoAccess:
 
     def test_request_auto_approve_allowed_channel(self, store):
         child = store.add_child("Alex")
-        store.add_channel("Good Channel", "allowed")
+        store.add_channel(child["id"], "Good Channel", "allowed")
         store.add_video("vid1", "Title", "Good Channel")
         status = store.request_video(child["id"], "vid1")
         assert status == "auto_approved"
 
     def test_request_auto_deny_blocked_channel(self, store):
         child = store.add_child("Alex")
-        store.add_channel("Bad Channel", "blocked")
+        store.add_channel(child["id"], "Bad Channel", "blocked")
         store.add_video("vid1", "Title", "Bad Channel")
         status = store.request_video(child["id"], "vid1")
         assert status == "denied"
@@ -403,42 +403,63 @@ class TestWatchTracking:
 
 class TestChannels:
     def test_add_and_check_allowed(self, store):
-        store.add_channel("Good Channel", "allowed")
-        assert store.is_channel_allowed("Good Channel")
-        assert not store.is_channel_blocked("Good Channel")
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Good Channel", "allowed")
+        assert store.is_channel_allowed(cid, "Good Channel")
+        assert not store.is_channel_blocked(cid, "Good Channel")
 
     def test_add_and_check_blocked(self, store):
-        store.add_channel("Bad Channel", "blocked")
-        assert store.is_channel_blocked("Bad Channel")
-        assert not store.is_channel_allowed("Bad Channel")
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Bad Channel", "blocked")
+        assert store.is_channel_blocked(cid, "Bad Channel")
+        assert not store.is_channel_allowed(cid, "Bad Channel")
 
     def test_case_insensitive(self, store):
-        store.add_channel("Test Channel", "allowed")
-        assert store.is_channel_allowed("test channel")
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Test Channel", "allowed")
+        assert store.is_channel_allowed(cid, "test channel")
 
     def test_get_channels(self, store):
-        store.add_channel("Allowed 1", "allowed")
-        store.add_channel("Allowed 2", "allowed")
-        store.add_channel("Blocked 1", "blocked")
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Allowed 1", "allowed")
+        store.add_channel(cid, "Allowed 2", "allowed")
+        store.add_channel(cid, "Blocked 1", "blocked")
 
-        allowed = store.get_channels(status="allowed")
+        allowed = store.get_channels(cid, status="allowed")
         assert len(allowed) == 2
 
-        blocked = store.get_channels(status="blocked")
+        blocked = store.get_channels(cid, status="blocked")
         assert len(blocked) == 1
 
     def test_remove_channel(self, store):
-        store.add_channel("Test Channel", "allowed")
-        assert store.remove_channel("Test Channel")
-        assert not store.is_channel_allowed("Test Channel")
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Test Channel", "allowed")
+        assert store.remove_channel(cid, "Test Channel")
+        assert not store.is_channel_allowed(cid, "Test Channel")
 
     def test_blocked_channels_set(self, store):
-        store.add_channel("Bad 1", "blocked")
-        store.add_channel("Bad 2", "blocked")
-        store.add_channel("Good 1", "allowed")
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Bad 1", "blocked")
+        store.add_channel(cid, "Bad 2", "blocked")
+        store.add_channel(cid, "Good 1", "allowed")
 
-        blocked = store.get_blocked_channels_set()
+        blocked = store.get_blocked_channels_set(cid)
         assert blocked == {"bad 1", "bad 2"}
+
+    def test_per_child_independence(self, store):
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        store.add_channel(alex["id"], "Fun Channel", "allowed")
+        store.add_channel(sam["id"], "Fun Channel", "blocked")
+        assert store.is_channel_allowed(alex["id"], "Fun Channel")
+        assert store.is_channel_blocked(sam["id"], "Fun Channel")
+        assert not store.is_channel_allowed(sam["id"], "Fun Channel")
 
 
 class TestWordFilters:

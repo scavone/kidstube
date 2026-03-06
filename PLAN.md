@@ -237,11 +237,11 @@ CREATE TABLE child_video_access (
 ```
 
 **Key design decisions for multi-child:**
-- Channel allow/block lists are **global** (shared across children) — if a channel is trusted, it's trusted for all kids. This keeps management simple.
+- **Channel allow/block lists are per-child.** A channel allowed for one child isn't automatically allowed for another. When a channel is allowed via inline button, it's allowed for the requesting child only. The `/channel` command accepts a child name.
 - **Video approval is per-child.** A video approved for the 12-year-old isn't auto-approved for the 7-year-old. When parent approves, Telegram shows which child requested it.
 - **Time limits, schedule windows, and category budgets are per-child** (stored in `child_settings`).
 - The Telegram notification includes the child's name: "**[Alex] New Video Request**"
-- Telegram commands accept an optional child name: `/time Alex set 90`, `/watch Alex`, `/stats Alex`
+- Telegram commands accept an optional child name: `/time Alex set 90`, `/watch Alex`, `/stats Alex`, `/channel Alex allow CrashCourse edu`
 
 **Extend Telegram bot for multi-child:**
 
@@ -254,6 +254,7 @@ CREATE TABLE child_video_access (
   - `/time ChildName schedule 800 2000` — Set schedule for specific child
   - `/watch ChildName` — View watch activity for specific child
   - `/stats ChildName` — View stats for specific child
+  - `/channel ChildName` — View/manage channel lists for specific child
 - If only one child exists, child name can be omitted from commands (backward compatible)
 
 #### 3.2.3 Server API Authentication
@@ -391,8 +392,7 @@ BrainRotGuardTV/
 The tvOS app should be built as a standard Xcode project:
 - Target: tvOS 17.0+
 - No entitlements requiring paid developer account (no CloudKit, no push notifications)
-- Archive → Export as IPA
-- Upload IPA to atvloadly web UI → install on Apple TV
+- Build → Package as IPA → Upload to atvloadly
 
 Include a `Config.swift` with build-time constants:
 ```swift
@@ -403,6 +403,31 @@ enum Config {
 ```
 
 User will need to update these values before building.
+
+**Build commands (from the repo root):**
+
+```bash
+# 1. Build the app (unsigned, release, for tvOS)
+cd tvos
+xcodebuild -project KidsTube.xcodeproj \
+  -scheme KidsTube \
+  -destination "generic/platform=tvOS" \
+  -configuration Release \
+  CODE_SIGN_IDENTITY="-" \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGNING_ALLOWED=NO \
+  ONLY_ACTIVE_ARCH=NO \
+  build \
+  CONFIGURATION_BUILD_DIR=/tmp/KidsTubeBuild
+
+# 2. Package the .app into an IPA
+mkdir -p /tmp/KidsTubeIPA/Payload
+cp -r /tmp/KidsTubeBuild/KidsTube.app /tmp/KidsTubeIPA/Payload/
+cd /tmp/KidsTubeIPA
+zip -r ~/Desktop/KidsTube.ipa Payload/
+```
+
+The resulting `KidsTube.ipa` on the Desktop can be uploaded to the atvloadly web UI for installation on Apple TV.
 
 ---
 
@@ -674,6 +699,6 @@ BRG_DAILY_LIMIT_MINUTES=120
 - [ ] Time limit enforcement pauses playback when exceeded
 - [ ] Schedule window blocks playback outside allowed hours
 - [ ] Per-child time limits are independent
-- [ ] Channel allow-list auto-approves for all children
+- [ ] Channel allow-list auto-approves for that child only
 - [ ] atvloadly installs IPA on Apple TV
 - [ ] App survives 7-day auto-refresh cycle

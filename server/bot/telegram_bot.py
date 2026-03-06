@@ -251,9 +251,10 @@ class TelegramBot:
             page = int(parts[2])
             await self._show_approved_page(query.message, child_id, page)
             return
-        if action == "chan_page" and len(parts) >= 2:
-            page = int(parts[1])
-            await self._show_channel_page(query.message, page)
+        if action == "chan_page" and len(parts) >= 3:
+            child_id = int(parts[1])
+            page = int(parts[2])
+            await self._show_channel_page(query.message, child_id, page)
             return
         # Revoke from approved list: rev:child_id:page:video_id
         if action == "rev" and len(parts) >= 4:
@@ -309,24 +310,22 @@ class TelegramBot:
             if video:
                 ch_name = video["channel_name"]
                 ch_id = video.get("channel_id")
-                self.video_store.add_channel(ch_name, "allowed", channel_id=ch_id, category=category)
+                self.video_store.add_channel(child_id, ch_name, "allowed", channel_id=ch_id, category=category)
                 # Auto-approve this video for the requesting child
                 self.video_store.update_video_status(child_id, video_id, "approved")
                 self._set_video_category(video_id, category)
 
-                # Best-effort: import channel videos for ALL children
+                # Best-effort: import channel videos for this child
                 import_count = 0
                 if self.inv_client and ch_id:
                     try:
-                        all_children = self.video_store.get_children()
-                        all_child_ids = [c["id"] for c in all_children]
                         channel_videos = await self.inv_client.get_channel_videos(ch_id)
                         import_count = self.video_store.bulk_import_channel_videos(
-                            channel_videos, category, all_child_ids
+                            channel_videos, category, [child_id]
                         )
                         logger.info(
-                            "Imported %d videos from channel %s for %d children",
-                            import_count, ch_name, len(all_child_ids),
+                            "Imported %d videos from channel %s for child %d",
+                            import_count, ch_name, child_id,
                         )
                     except Exception:
                         logger.warning(
@@ -339,8 +338,8 @@ class TelegramBot:
                 import_note = f"\n{import_count} channel videos imported." if import_count > 0 else ""
                 await query.edit_message_caption(
                     caption=(
-                        f"Channel <b>{_esc(ch_name)}</b> allowed ({label}).\n"
-                        f"Video approved for {_esc(child_name)}.{import_note}"
+                        f"Channel <b>{_esc(ch_name)}</b> allowed ({label}) for {_esc(child_name)}.\n"
+                        f"Video approved.{import_note}"
                     ),
                     parse_mode=ParseMode.HTML,
                 )
@@ -349,12 +348,12 @@ class TelegramBot:
             if video:
                 ch_name = video["channel_name"]
                 ch_id = video.get("channel_id")
-                self.video_store.add_channel(ch_name, "blocked", channel_id=ch_id)
+                self.video_store.add_channel(child_id, ch_name, "blocked", channel_id=ch_id)
                 self.video_store.update_video_status(child_id, video_id, "denied")
                 await query.edit_message_caption(
                     caption=(
-                        f"Channel <b>{_esc(ch_name)}</b> blocked.\n"
-                        f"Video denied for {_esc(child_name)}."
+                        f"Channel <b>{_esc(ch_name)}</b> blocked for {_esc(child_name)}.\n"
+                        f"Video denied."
                     ),
                     parse_mode=ParseMode.HTML,
                 )
@@ -388,7 +387,7 @@ class TelegramBot:
             "/pending — View pending video requests\n"
             "/approved [ChildName] — Approved videos\n"
             "/stats [ChildName] — Video statistics\n"
-            "/channel — Manage channel allow/block lists\n"
+            "/channel [ChildName] — Manage channel allow/block lists\n"
             "/time [ChildName] — View/set time limits\n"
             "/watch [ChildName] — Watch activity today\n"
             "/search — Manage word filters\n"
@@ -742,82 +741,106 @@ class TelegramBot:
 
         args = context.args or []
 
-        # /channel (no args) -> list channels
-        if not args:
-            await self._show_channel_page(update.effective_message, page=0, edit=False)
+        # Parse: /channel [ChildName] [subcommand] [args...]
+        child, sub_args = self._parse_child_args(args)
+
+        if not child:
+            children = self._all_children()
+            if not children:
+                await update.effective_message.reply_text("No child profiles yet.")
+                return
+            if len(children) > 1:
+                names = ", ".join(c["name"] for c in children)
+                await update.effective_message.reply_text(
+                    f"Specify a child: /channel [Name] [allow|block|unallow|unblock]\nChildren: {names}"
+                )
+                return
+            child = children[0]
+            sub_args = list(args)
+
+        child_id = child["id"]
+        child_name = child["name"]
+
+        # /channel ChildName (no subcommand) -> list channels
+        if not sub_args:
+            await self._show_channel_page(update.effective_message, child_id, page=0, edit=False)
             return
 
-        subcmd = args[0].lower()
+        subcmd = sub_args[0].lower()
 
-        # /channel allow <name> [category]
-        if subcmd == "allow" and len(args) >= 2:
-            if args[-1].lower() in ("edu", "fun"):
-                category = args[-1].lower()
-                name = " ".join(args[1:-1]) if len(args) > 2 else args[1]
+        # /channel [ChildName] allow <name> [category]
+        if subcmd == "allow" and len(sub_args) >= 2:
+            rest = sub_args[1:]
+            if rest[-1].lower() in ("edu", "fun"):
+                category = rest[-1].lower()
+                name = " ".join(rest[:-1]) if len(rest) > 1 else rest[0]
             else:
                 category = None
-                name = " ".join(args[1:])
-            self.video_store.add_channel(name, "allowed", category=category)
+                name = " ".join(rest)
+            self.video_store.add_channel(child_id, name, "allowed", category=category)
             cat_label = f" ({category})" if category else ""
             await update.effective_message.reply_text(
-                f"Channel <b>{_esc(name)}</b> added to allow list{cat_label}.",
+                f"Channel <b>{_esc(name)}</b> allowed for {_esc(child_name)}{cat_label}.",
                 parse_mode=ParseMode.HTML,
             )
 
-        # /channel block <name>
-        elif subcmd == "block" and len(args) >= 2:
-            name = " ".join(args[1:])
-            self.video_store.add_channel(name, "blocked")
+        # /channel [ChildName] block <name>
+        elif subcmd == "block" and len(sub_args) >= 2:
+            name = " ".join(sub_args[1:])
+            self.video_store.add_channel(child_id, name, "blocked")
             await update.effective_message.reply_text(
-                f"Channel <b>{_esc(name)}</b> added to block list.",
+                f"Channel <b>{_esc(name)}</b> blocked for {_esc(child_name)}.",
                 parse_mode=ParseMode.HTML,
             )
 
-        # /channel unallow <name>
-        elif subcmd == "unallow" and len(args) >= 2:
-            name = " ".join(args[1:])
-            if self.video_store.remove_channel(name):
+        # /channel [ChildName] unallow <name>
+        elif subcmd == "unallow" and len(sub_args) >= 2:
+            name = " ".join(sub_args[1:])
+            if self.video_store.remove_channel(child_id, name):
                 await update.effective_message.reply_text(
-                    f"Channel <b>{_esc(name)}</b> removed from allow list.",
+                    f"Channel <b>{_esc(name)}</b> removed from {_esc(child_name)}'s allow list.",
                     parse_mode=ParseMode.HTML,
                 )
             else:
-                await update.effective_message.reply_text(f"Channel '{name}' not found.")
+                await update.effective_message.reply_text(f"Channel '{name}' not found for {child_name}.")
 
-        # /channel unblock <name>
-        elif subcmd == "unblock" and len(args) >= 2:
-            name = " ".join(args[1:])
-            if self.video_store.remove_channel(name):
+        # /channel [ChildName] unblock <name>
+        elif subcmd == "unblock" and len(sub_args) >= 2:
+            name = " ".join(sub_args[1:])
+            if self.video_store.remove_channel(child_id, name):
                 await update.effective_message.reply_text(
-                    f"Channel <b>{_esc(name)}</b> removed from block list.",
+                    f"Channel <b>{_esc(name)}</b> removed from {_esc(child_name)}'s block list.",
                     parse_mode=ParseMode.HTML,
                 )
             else:
-                await update.effective_message.reply_text(f"Channel '{name}' not found.")
+                await update.effective_message.reply_text(f"Channel '{name}' not found for {child_name}.")
 
         else:
             await update.effective_message.reply_text(
                 "Usage:\n"
-                "/channel — List channels\n"
-                "/channel allow Name [edu|fun]\n"
-                "/channel block Name\n"
-                "/channel unallow Name\n"
-                "/channel unblock Name"
+                "/channel [ChildName] — List channels\n"
+                "/channel [ChildName] allow Name [edu|fun]\n"
+                "/channel [ChildName] block Name\n"
+                "/channel [ChildName] unallow Name\n"
+                "/channel [ChildName] unblock Name"
             )
 
-    async def _show_channel_page(self, message, page: int = 0, edit: bool = True):
-        """Display paginated channel list."""
-        allowed = self.video_store.get_channels(status="allowed")
-        blocked = self.video_store.get_channels(status="blocked")
+    async def _show_channel_page(self, message, child_id: int, page: int = 0, edit: bool = True):
+        """Display paginated channel list for a child."""
+        child = self.video_store.get_child(child_id)
+        child_name = child["name"] if child else f"Child#{child_id}"
+
+        allowed = self.video_store.get_channels(child_id, status="allowed")
+        blocked = self.video_store.get_channels(child_id, status="blocked")
 
         if not allowed and not blocked:
-            text = "No channels configured. Use /channel allow or /channel block."
+            text = f"No channels configured for {_esc(child_name)}. Use /channel {_esc(child_name)} allow or /channel {_esc(child_name)} block."
             await self._send_or_edit(message, text, edit=edit)
             return
 
         lines = []
         if allowed:
-            lines.append(f"<b>Allowed Channels ({len(allowed)})</b>")
+            lines.append(f"<b>Allowed Channels for {_esc(child_name)} ({len(allowed)})</b>")
             start = page * _CHANNEL_PAGE_SIZE
             for ch in allowed[start:start + _CHANNEL_PAGE_SIZE]:
                 cat = ch.get("category", "")
@@ -825,16 +848,16 @@ class TelegramBot:
                 lines.append(f"  + {_esc(ch['channel_name'])}{cat_tag}")
 
         if blocked:
-            lines.append(f"\n<b>Blocked Channels ({len(blocked)})</b>")
+            lines.append(f"\n<b>Blocked Channels for {_esc(child_name)} ({len(blocked)})</b>")
             for ch in blocked[:_CHANNEL_PAGE_SIZE]:
                 lines.append(f"  - {_esc(ch['channel_name'])}")
 
         total = len(allowed)  # paginate allowed only
         buttons = []
         if page > 0:
-            buttons.append(InlineKeyboardButton("< Prev", callback_data=f"chan_page:{page - 1}"))
+            buttons.append(InlineKeyboardButton("< Prev", callback_data=f"chan_page:{child_id}:{page - 1}"))
         if (page + 1) * _CHANNEL_PAGE_SIZE < total:
-            buttons.append(InlineKeyboardButton("Next >", callback_data=f"chan_page:{page + 1}"))
+            buttons.append(InlineKeyboardButton("Next >", callback_data=f"chan_page:{child_id}:{page + 1}"))
 
         keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
         text = "\n".join(lines)

@@ -581,7 +581,8 @@ class TestApprovedCommand:
 
 class TestChannelCommand:
     @pytest.mark.asyncio
-    async def test_channel_list_empty(self, bot, admin_update, context):
+    async def test_channel_list_empty(self, bot, admin_update, context, store):
+        store.add_child("Alex")  # single child — name can be omitted
         context.args = []
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
@@ -589,32 +590,36 @@ class TestChannelCommand:
 
     @pytest.mark.asyncio
     async def test_channel_allow(self, bot, admin_update, context, store):
+        child = store.add_child("Alex")
         context.args = ["allow", "GoodChannel", "edu"]
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
-        assert "allow list" in msg
-        assert store.is_channel_allowed("GoodChannel")
+        assert "allowed" in msg
+        assert store.is_channel_allowed(child["id"], "GoodChannel")
 
     @pytest.mark.asyncio
     async def test_channel_block(self, bot, admin_update, context, store):
+        child = store.add_child("Alex")
         context.args = ["block", "BadChannel"]
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
-        assert "block list" in msg
-        assert store.is_channel_blocked("BadChannel")
+        assert "blocked" in msg
+        assert store.is_channel_blocked(child["id"], "BadChannel")
 
     @pytest.mark.asyncio
     async def test_channel_unallow(self, bot, admin_update, context, store):
-        store.add_channel("TestCh", "allowed")
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "TestCh", "allowed")
         context.args = ["unallow", "TestCh"]
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
         assert "removed" in msg
-        assert not store.is_channel_allowed("TestCh")
+        assert not store.is_channel_allowed(child["id"], "TestCh")
 
     @pytest.mark.asyncio
     async def test_channel_unblock(self, bot, admin_update, context, store):
-        store.add_channel("BadCh", "blocked")
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "BadCh", "blocked")
         context.args = ["unblock", "BadCh"]
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
@@ -622,8 +627,9 @@ class TestChannelCommand:
 
     @pytest.mark.asyncio
     async def test_channel_list_with_channels(self, bot, admin_update, context, store):
-        store.add_channel("Allowed1", "allowed")
-        store.add_channel("Blocked1", "blocked")
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Allowed1", "allowed")
+        store.add_channel(child["id"], "Blocked1", "blocked")
         context.args = []
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
@@ -631,7 +637,8 @@ class TestChannelCommand:
         assert "Blocked Channels" in msg
 
     @pytest.mark.asyncio
-    async def test_channel_invalid_subcmd(self, bot, admin_update, context):
+    async def test_channel_invalid_subcmd(self, bot, admin_update, context, store):
+        store.add_child("Alex")
         context.args = ["invalid"]
         await bot._cmd_channel(admin_update, context)
         msg = admin_update.effective_message.reply_text.call_args[0][0]
@@ -993,7 +1000,7 @@ class TestCallbackHandling:
         update = self._make_callback_update(f"allowchan_edu:{child['id']}:vid12345678")
         await bot._handle_callback(update, context)
 
-        assert store.is_channel_allowed("GoodChannel")
+        assert store.is_channel_allowed(child["id"], "GoodChannel")
         assert store.get_video_status(child["id"], "vid12345678") == "approved"
 
     @pytest.mark.asyncio
@@ -1005,7 +1012,7 @@ class TestCallbackHandling:
         update = self._make_callback_update(f"blockchan:{child['id']}:vid12345678")
         await bot._handle_callback(update, context)
 
-        assert store.is_channel_blocked("BadChannel")
+        assert store.is_channel_blocked(child["id"], "BadChannel")
         assert store.get_video_status(child["id"], "vid12345678") == "denied"
 
     @pytest.mark.asyncio
@@ -1040,7 +1047,7 @@ class TestChannelVideoImport:
 
     @pytest.mark.asyncio
     async def test_allowchan_imports_channel_videos(self, store, cfg, context):
-        """Allowing a channel should import videos for all children."""
+        """Allowing a channel should import videos for the requesting child only."""
         alex = store.add_child("Alex")
         sam = store.add_child("Sam")
         store.add_video("vid12345678", "Trigger Video", "GoodChannel", channel_id="UC123")
@@ -1056,15 +1063,16 @@ class TestChannelVideoImport:
         update = self._make_callback_update(f"allowchan_edu:{alex['id']}:vid12345678")
         await bot._handle_callback(update, context)
 
-        assert store.is_channel_allowed("GoodChannel")
+        assert store.is_channel_allowed(alex["id"], "GoodChannel")
         assert store.get_video_status(alex["id"], "vid12345678") == "approved"
-        # Imported videos should exist and be approved for BOTH children
+        # Imported videos should exist and be approved for requesting child only
         assert store.get_video("ch_vid1") is not None
         assert store.get_video("ch_vid2") is not None
         assert store.get_video_status(alex["id"], "ch_vid1") == "approved"
-        assert store.get_video_status(sam["id"], "ch_vid1") == "approved"
         assert store.get_video_status(alex["id"], "ch_vid2") == "approved"
-        assert store.get_video_status(sam["id"], "ch_vid2") == "approved"
+        # Sam should NOT have access (channel is per-child)
+        assert store.get_video_status(sam["id"], "ch_vid1") is None
+        assert store.get_video_status(sam["id"], "ch_vid2") is None
         # Confirmation should mention import count
         caption = update.callback_query.edit_message_caption.call_args[1]["caption"]
         assert "2 channel videos imported" in caption
@@ -1083,7 +1091,7 @@ class TestChannelVideoImport:
         update = self._make_callback_update(f"allowchan_edu:{child['id']}:vid12345678")
         await bot._handle_callback(update, context)
 
-        assert store.is_channel_allowed("FailChannel")
+        assert store.is_channel_allowed(child["id"], "FailChannel")
         assert store.get_video_status(child["id"], "vid12345678") == "approved"
 
     @pytest.mark.asyncio
@@ -1097,7 +1105,7 @@ class TestChannelVideoImport:
         update = self._make_callback_update(f"allowchan_edu:{child['id']}:vid12345678")
         await bot._handle_callback(update, context)
 
-        assert store.is_channel_allowed("Channel")
+        assert store.is_channel_allowed(child["id"], "Channel")
         assert store.get_video_status(child["id"], "vid12345678") == "approved"
 
     @pytest.mark.asyncio
@@ -1113,7 +1121,7 @@ class TestChannelVideoImport:
         update = self._make_callback_update(f"allowchan_fun:{child['id']}:vid12345678")
         await bot._handle_callback(update, context)
 
-        assert store.is_channel_allowed("Channel")
+        assert store.is_channel_allowed(child["id"], "Channel")
         assert store.get_video_status(child["id"], "vid12345678") == "approved"
         mock_inv.get_channel_videos.assert_not_called()
 
@@ -1164,9 +1172,10 @@ class TestMultiChildApproval:
 
         await bot._handle_callback(update, context)
 
-        assert store.is_channel_allowed("NewChannel")
+        assert store.is_channel_allowed(alex["id"], "NewChannel")
+        assert not store.is_channel_allowed(sam["id"], "NewChannel")
         assert store.get_video_status(alex["id"], "vid12345678") == "approved"
-        # Sam's request remains pending (channel allow only auto-approves future requests)
+        # Sam's request remains pending (channel is allowed for Alex only)
         assert store.get_video_status(sam["id"], "vid12345678") == "pending"
 
     @pytest.mark.asyncio
