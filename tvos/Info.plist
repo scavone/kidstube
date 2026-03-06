@@ -26,6 +26,10 @@
 	<array>
 		<string>arm64</string>
 	</array>
+	<key>BRGServerURL</key>
+	<string>$(BRG_SERVER_URL)</string>
+	<key>BRGAPIKey</key>
+	<string>$(BRG_API_KEY)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

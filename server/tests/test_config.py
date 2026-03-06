@@ -40,7 +40,10 @@ class TestExpandEnvVars:
 
 
 class TestConfigFromEnv:
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
+        for var in list(os.environ):
+            if var.startswith("BRG_"):
+                monkeypatch.delenv(var)
         cfg = Config.from_env()
         assert cfg.app_name == "KidsTube"
         assert cfg.web.host == "0.0.0.0"

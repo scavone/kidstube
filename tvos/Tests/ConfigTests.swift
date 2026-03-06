@@ -4,17 +4,6 @@ import Testing
 @Suite("Config")
 struct ConfigTests {
 
-    @Test("Server base URL is a valid HTTP URL")
-    func serverBaseURLIsValid() {
-        #expect(!Config.serverBaseURL.isEmpty)
-        #expect(Config.serverBaseURL.hasPrefix("http"))
-    }
-
-    @Test("API key has a default value")
-    func apiKeyHasDefault() {
-        #expect(!Config.apiKey.isEmpty)
-    }
-
     @Test("Poll interval is between 1 and 30 seconds")
     func pollIntervalReasonable() {
         #expect(Config.pollInterval >= 1.0)

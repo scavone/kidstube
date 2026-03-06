@@ -220,13 +220,17 @@ class TestRequirements:
 
     @pytest.fixture(autouse=True)
     def load_requirements(self):
-        req_path = os.path.join(SERVER_ROOT, "requirements.txt")
-        with open(req_path) as f:
-            self.packages = [
-                line.split("==")[0].split("[")[0].strip().lower()
-                for line in f
-                if line.strip() and not line.startswith("#")
-            ]
+        self.packages = []
+        for filename in ("requirements.txt", "requirements-dev.txt"):
+            req_path = os.path.join(SERVER_ROOT, filename)
+            if not os.path.exists(req_path):
+                continue
+            with open(req_path) as f:
+                self.packages.extend(
+                    line.split("==")[0].split("[")[0].strip().lower()
+                    for line in f
+                    if line.strip() and not line.startswith("#") and not line.startswith("-r")
+                )
 
     def test_has_fastapi(self):
         assert "fastapi" in self.packages

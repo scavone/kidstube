@@ -136,7 +136,7 @@ struct APIClientTests {
             "url": "http://invidious:3000/latest_version?id=abc123&itag=18"
         ])
 
-        let url = try await client.getStreamURL(videoId: "abc123", childId: 1)
+        let (url, _) = try await client.getStreamURL(videoId: "abc123", childId: 1)
         #expect(url.contains("invidious"))
         #expect(url.contains("abc123"))
     }

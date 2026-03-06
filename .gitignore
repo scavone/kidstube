@@ -35,6 +35,7 @@ docker-compose.override.yml
 *~
 
 # Xcode / tvOS
+Secrets.xcconfig
 *.xcuserdata
 xcuserdata/
 DerivedData/
