@@ -111,7 +111,9 @@ struct ContentView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: screen)
         }
-        .fullScreenCover(item: $playerItem) { item in
+        .fullScreenCover(item: $playerItem, onDismiss: {
+            catalogRefreshTrigger += 1
+        }) { item in
             PlayerView(
                 video: item.video,
                 child: item.child,
@@ -125,7 +127,6 @@ struct ContentView: View {
                 },
                 onDismiss: {
                     playerItem = nil
-                    catalogRefreshTrigger += 1
                 }
             )
         }

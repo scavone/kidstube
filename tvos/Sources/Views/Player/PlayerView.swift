@@ -16,6 +16,7 @@ struct PlayerView: View {
 
     @StateObject private var viewModel = PlayerViewModel()
     @State private var showResumePrompt: Bool = false
+    @State private var resumeSeconds: Int = 0
 
     var body: some View {
         ZStack {
@@ -30,7 +31,11 @@ struct PlayerView: View {
             }
         }
         .task {
-            if video.hasResumePosition {
+            // Always fetch latest position from server (catalog data may be stale)
+            if let pos = await viewModel.fetchResumePosition(
+                videoId: video.videoId, childId: child.id
+            ) {
+                resumeSeconds = pos
                 showResumePrompt = true
             } else {
                 await viewModel.loadAndPlay(
@@ -82,14 +87,14 @@ struct PlayerView: View {
                             await viewModel.loadAndPlay(
                                 videoId: video.videoId,
                                 childId: child.id,
-                                resumePosition: video.watchPosition
+                                resumePosition: resumeSeconds
                             )
                         }
                     } label: {
                         VStack(spacing: 8) {
                             Image(systemName: "play.circle.fill")
                                 .font(.system(size: 48))
-                            Text("Resume from \(video.formattedResumePosition)")
+                            Text("Resume from \(formatSeconds(resumeSeconds))")
                                 .font(.callout)
                         }
                         .frame(width: 260, height: 120)
@@ -180,6 +185,16 @@ struct PlayerView: View {
         }
     }
 
+    private func formatSeconds(_ total: Int) -> String {
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
     // MARK: - Player
 
     private func playerContent(_ player: AVPlayer) -> some View {
@@ -228,6 +243,20 @@ final class PlayerViewModel: ObservableObject {
 
     init(apiClient: APIClient = APIClient()) {
         self.apiClient = apiClient
+    }
+
+    /// Fetch the latest watch position from the server.
+    /// Returns the position in seconds if resumable, or nil.
+    func fetchResumePosition(videoId: String, childId: Int) async -> Int? {
+        do {
+            let response = try await apiClient.getWatchPosition(videoId: videoId, childId: childId)
+            let pos = response.watchPosition
+            let dur = response.watchDuration
+            guard pos >= 5, dur > 0, pos < dur - 5 else { return nil }
+            return pos
+        } catch {
+            return nil
+        }
     }
 
     func loadAndPlay(videoId: String, childId: Int, resumePosition: Int?) async {
