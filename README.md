@@ -247,8 +247,42 @@ Once running, message your bot on Telegram. Commands:
 | `/stats [Child]` | Video statistics (combined if child omitted) |
 | `/watch [Child]` | Watch activity (combined if child omitted) |
 | `/time [Child]` | View/set time limits and schedule |
+| `/freeday [Child]` | Grant unlimited watch time for today |
 
 Child name can be omitted when only one child exists.
+
+### Schedule & Time Controls
+
+Set daily screen time limits and viewing schedule windows per child. The tvOS app enforces these in real time — showing a countdown banner as bedtime approaches, warning when a video will be cut short, and stopping playback precisely at the cutoff.
+
+**Daily limits:**
+
+```
+/time Alex set 90          # 90-minute daily limit
+/time Alex off             # Disable daily limit
+/time Alex                 # View current status
+/freeday Alex              # Unlimited today only
+```
+
+**Viewing schedule (allowed hours):**
+
+```
+/time Alex schedule 800 2000                # Default: 8 AM – 8 PM every day
+/time Alex schedule monday 1500 1900        # Override Monday: 3 PM – 7 PM
+/time Alex schedule saturday 0800 2030      # Override Saturday: 8 AM – 8:30 PM
+/time Alex schedule default 0800 2000       # Fallback for days without overrides
+/time Alex schedule monday off              # Remove Monday override
+/time Alex schedule off                     # Disable all schedules
+```
+
+Schedule resolution priority: **per-day override > schedule:default > legacy default schedule**.
+
+**What the child sees on the TV:**
+
+- **Countdown banner** on the home screen when bedtime is within 30 minutes
+- **Duration warning** when selecting a video longer than the remaining time ("This video is 12 min but bedtime is in 8 min. It will be cut short.")
+- **Automatic playback stop** at the exact cutoff time
+- **"Not Viewing Time" screen** when opening the app outside allowed hours, which returns to the profile picker so another child can try
 
 Photo avatars: Send a photo to the bot with caption `avatar ChildName`.
 
