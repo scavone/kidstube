@@ -80,6 +80,7 @@ class ScheduleStatusResponse(BaseModel):
     unlock_time: str
     start: str
     end: str
+    minutes_remaining: int  # -1 if no end time / no schedule
 
 
 class HeartbeatResponse(BaseModel):

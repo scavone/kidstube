@@ -32,10 +32,12 @@ struct ScheduleStatus: Codable, Equatable {
     let unlockTime: String
     let start: String
     let end: String
+    let minutesRemaining: Int  // -1 = no schedule / no end time
 
     enum CodingKeys: String, CodingKey {
         case allowed
         case unlockTime = "unlock_time"
         case start, end
+        case minutesRemaining = "minutes_remaining"
     }
 }

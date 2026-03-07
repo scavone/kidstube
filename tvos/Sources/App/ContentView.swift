@@ -35,6 +35,10 @@ struct ContentView: View {
                             onSwitchProfile: {
                                 selectedChild = nil
                                 screen = .profilePicker
+                            },
+                            onOutsideSchedule: { unlockTime in
+                                scheduleUnlockTime = unlockTime
+                                screen = .outsideSchedule
                             }
                         )
                     }
@@ -105,7 +109,11 @@ struct ContentView: View {
                 case .outsideSchedule:
                     OutsideScheduleView(
                         unlockTime: scheduleUnlockTime,
-                        onBack: { screen = .home }
+                        onBack: {
+                            // Return to profile picker so another child can watch
+                            selectedChild = nil
+                            screen = .profilePicker
+                        }
                     )
                 }
             }
@@ -123,6 +131,7 @@ struct ContentView: View {
                 },
                 onOutsideSchedule: {
                     playerItem = nil
+                    scheduleUnlockTime = ""
                     screen = .outsideSchedule
                 },
                 onDismiss: {

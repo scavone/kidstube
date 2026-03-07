@@ -559,7 +559,9 @@ class TestScheduleStatusEndpoint:
         store.add_child("Alex")
         resp = client.get("/api/schedule-status?child_id=1", headers=auth_headers)
         assert resp.status_code == 200
-        assert resp.json()["allowed"] is True
+        data = resp.json()
+        assert data["allowed"] is True
+        assert data["minutes_remaining"] == -1
 
     def test_schedule_status_with_window(self, client, auth_headers, store):
         child = store.add_child("Alex")
@@ -572,6 +574,45 @@ class TestScheduleStatusEndpoint:
         assert "allowed" in data
         assert data["start"] == "8:00 AM"
         assert data["end"] == "8:00 PM"
+        assert "minutes_remaining" in data
+
+    def test_schedule_status_per_day(self, client, auth_headers, store):
+        """Per-day schedule overrides legacy schedule_start/schedule_end."""
+        import json
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        child = store.add_child("Alex")
+        # Set a legacy schedule
+        store.set_child_setting(child["id"], "schedule_start", "06:00")
+        store.set_child_setting(child["id"], "schedule_end", "18:00")
+        # Set a per-day override for today (using the configured timezone)
+        tz = ZoneInfo("America/New_York")
+        day_name = ["monday", "tuesday", "wednesday", "thursday",
+                    "friday", "saturday", "sunday"][datetime.now(tz).weekday()]
+        store.set_child_setting(
+            child["id"], f"schedule:{day_name}",
+            json.dumps({"start": "08:00", "end": "20:00"})
+        )
+        resp = client.get("/api/schedule-status?child_id=1", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        # Should use the per-day override, not the legacy
+        assert data["start"] == "8:00 AM"
+        assert data["end"] == "8:00 PM"
+
+    def test_schedule_status_default_fallback(self, client, auth_headers, store):
+        """schedule:default is used when no per-day or legacy schedule exists."""
+        import json
+        child = store.add_child("Alex")
+        store.set_child_setting(
+            child["id"], "schedule:default",
+            json.dumps({"start": "09:00", "end": "21:00"})
+        )
+        resp = client.get("/api/schedule-status?child_id=1", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["start"] == "9:00 AM"
+        assert data["end"] == "9:00 PM"
 
 
 class TestChannelsEndpoint:

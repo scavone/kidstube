@@ -7,6 +7,7 @@ import AVKit
 /// - Runs heartbeat timer for watch time tracking
 /// - Saves playback position periodically and on exit for resume support
 /// - Monitors time limits and schedule windows
+/// - Sets a precise cutoff timer based on the schedule end time
 struct PlayerView: View {
     let video: Video
     let child: ChildProfile
@@ -56,6 +57,12 @@ struct PlayerView: View {
         }
         .onChange(of: viewModel.heartbeat.isOutsideSchedule) { _, outside in
             if outside {
+                viewModel.pause()
+                onOutsideSchedule()
+            }
+        }
+        .onChange(of: viewModel.scheduleCutoffReached) { _, reached in
+            if reached {
                 viewModel.pause()
                 onOutsideSchedule()
             }
@@ -234,10 +241,12 @@ final class PlayerViewModel: ObservableObject {
     @Published var isLoading = true
     @Published var errorMessage: String?
     @Published var heartbeat = HeartbeatService()
+    @Published var scheduleCutoffReached = false
 
     private let apiClient: APIClient
     private var hlsSessionId: String?
     private var positionSaveTask: Task<Void, Never>?
+    private var cutoffTask: Task<Void, Never>?
     private var videoId: String = ""
     private var childId: Int = 0
 
@@ -290,6 +299,9 @@ final class PlayerViewModel: ObservableObject {
 
             // Start periodic position saving (every 15 seconds)
             startPositionSaving()
+
+            // Start schedule cutoff timer
+            startScheduleCutoffTimer(childId: childId)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -299,6 +311,7 @@ final class PlayerViewModel: ObservableObject {
     func pause() {
         player?.pause()
         heartbeat.stop()
+        cutoffTask?.cancel()
         saveCurrentPosition()
     }
 
@@ -307,6 +320,8 @@ final class PlayerViewModel: ObservableObject {
         saveCurrentPosition()
         positionSaveTask?.cancel()
         positionSaveTask = nil
+        cutoffTask?.cancel()
+        cutoffTask = nil
         player?.pause()
         player = nil
         heartbeat.stop()
@@ -315,6 +330,30 @@ final class PlayerViewModel: ObservableObject {
             let client = apiClient
             Task { await client.deleteHLSSession(sessionId: sessionId) }
             hlsSessionId = nil
+        }
+    }
+
+    // MARK: - Schedule Cutoff Timer
+
+    /// Fetch the schedule and set a precise timer to stop playback at the cutoff time.
+    private func startScheduleCutoffTimer(childId: Int) {
+        cutoffTask?.cancel()
+        cutoffTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let schedule = try await self.apiClient.getScheduleStatus(childId: childId)
+                guard !Task.isCancelled else { return }
+                // Only set timer if currently allowed and there's a known end time
+                guard schedule.allowed, schedule.minutesRemaining >= 0 else { return }
+                let sleepNanos = UInt64(schedule.minutesRemaining) * 60 * 1_000_000_000
+                if sleepNanos > 0 {
+                    try await Task.sleep(nanoseconds: sleepNanos)
+                }
+                guard !Task.isCancelled else { return }
+                self.scheduleCutoffReached = true
+            } catch {
+                // Non-critical — heartbeat will still catch outside-schedule
+            }
         }
     }
 

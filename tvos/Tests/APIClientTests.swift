@@ -280,7 +280,8 @@ struct APIClientTests {
     func getScheduleStatus() async throws {
         let client = makeClient()
         MockURLProtocol.mock(path: "/api/schedule-status", json: [
-            "allowed": true, "unlock_time": "", "start": "8:00 AM", "end": "8:00 PM"
+            "allowed": true, "unlock_time": "", "start": "8:00 AM", "end": "8:00 PM",
+            "minutes_remaining": 120
         ])
 
         let schedule = try await client.getScheduleStatus(childId: 1)
@@ -293,7 +294,8 @@ struct APIClientTests {
     func getScheduleStatusBlocked() async throws {
         let client = makeClient()
         MockURLProtocol.mock(path: "/api/schedule-status", json: [
-            "allowed": false, "unlock_time": "8:00 AM", "start": "8:00 AM", "end": "8:00 PM"
+            "allowed": false, "unlock_time": "8:00 AM", "start": "8:00 AM", "end": "8:00 PM",
+            "minutes_remaining": -1
         ])
 
         let schedule = try await client.getScheduleStatus(childId: 1)

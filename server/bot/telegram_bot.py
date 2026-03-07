@@ -32,6 +32,8 @@ from utils import (
     format_time_12h,
     is_within_schedule,
     format_duration,
+    resolve_day_schedule,
+    _DAY_NAMES,
 )
 
 logger = logging.getLogger(__name__)
@@ -1450,20 +1452,71 @@ class TelegramBot:
                 parse_mode=ParseMode.HTML,
             )
 
-        # /time [Child] schedule <start> <end>
-        elif subcmd == "schedule" and len(sub_args) >= 3:
-            start_raw = sub_args[1]
-            end_raw = sub_args[2]
+        # /time [Child] schedule <start> <end>            — default schedule
+        # /time [Child] schedule <day> <start> <end>       — per-day schedule
+        # /time [Child] schedule off                       — disable all
+        # /time [Child] schedule <day> off                 — remove per-day override
+        elif subcmd == "schedule" and len(sub_args) >= 2:
+            import json as _json
 
-            if start_raw.lower() == "off":
+            arg1 = sub_args[1]
+
+            # /time schedule off — disable all schedules
+            if arg1.lower() == "off":
                 self.video_store.set_child_setting(cid, "schedule_start", "")
                 self.video_store.set_child_setting(cid, "schedule_end", "")
+                for day in _DAY_NAMES:
+                    self.video_store.set_child_setting(cid, f"schedule:{day}", "")
+                self.video_store.set_child_setting(cid, "schedule:default", "")
                 await update.effective_message.reply_text(
-                    f"Schedule for {_esc(cname)} <b>disabled</b>.",
+                    f"All schedules for {_esc(cname)} <b>disabled</b>.",
                     parse_mode=ParseMode.HTML,
                 )
                 return
 
+            # Check if arg1 is a day name (or "default")
+            day_target = arg1.lower()
+            if day_target in _DAY_NAMES or day_target == "default":
+                # /time schedule <day> off — remove per-day override
+                if len(sub_args) >= 3 and sub_args[2].lower() == "off":
+                    self.video_store.set_child_setting(cid, f"schedule:{day_target}", "")
+                    label = day_target.capitalize()
+                    await update.effective_message.reply_text(
+                        f"{label} schedule for {_esc(cname)} <b>removed</b>.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    return
+                # /time schedule <day> <start> <end>
+                if len(sub_args) < 4:
+                    await update.effective_message.reply_text(
+                        "Usage: /time Name schedule monday 800 2000"
+                    )
+                    return
+                start = parse_time_input(sub_args[2])
+                end = parse_time_input(sub_args[3])
+                if not start or not end:
+                    await update.effective_message.reply_text(
+                        "Invalid time format. Use: /time Name schedule monday 800 2000"
+                    )
+                    return
+                val = _json.dumps({"start": start, "end": end})
+                self.video_store.set_child_setting(cid, f"schedule:{day_target}", val)
+                label = day_target.capitalize()
+                await update.effective_message.reply_text(
+                    f"{label} schedule for {_esc(cname)}: "
+                    f"<b>{format_time_12h(start)}</b> to <b>{format_time_12h(end)}</b>",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+
+            # Legacy: /time schedule <start> <end> — sets default for all days
+            if len(sub_args) < 3:
+                await update.effective_message.reply_text(
+                    "Usage: /time Name schedule 800 2000"
+                )
+                return
+            start_raw = sub_args[1]
+            end_raw = sub_args[2]
             start = parse_time_input(start_raw)
             end = parse_time_input(end_raw)
             if not start or not end:
@@ -1494,8 +1547,11 @@ class TelegramBot:
                 "/time [ChildName] — View time status\n"
                 "/time [ChildName] set 90 — Set daily limit\n"
                 "/time [ChildName] off — Disable limit\n"
-                "/time [ChildName] schedule 800 2000 — Set schedule\n"
-                "/time [ChildName] schedule off — Disable schedule"
+                "/time [ChildName] schedule 800 2000 — Set default schedule\n"
+                "/time [ChildName] schedule monday 1500 1900 — Per-day schedule\n"
+                "/time [ChildName] schedule default 800 2000 — Default fallback\n"
+                "/time [ChildName] schedule off — Disable all schedules\n"
+                "/time [ChildName] schedule monday off — Remove day override"
             )
 
     async def _show_time_status(self, message, child: dict):
@@ -1530,16 +1586,44 @@ class TelegramBot:
         if is_free_day:
             lines.append("\nFree day pass: <b>ACTIVE</b>")
 
-        # Schedule
-        sched_start = self.video_store.get_child_setting(cid, "schedule_start", "")
-        sched_end = self.video_store.get_child_setting(cid, "schedule_end", "")
+        # Schedule — resolve per-day then show
+        import json as _json
+        all_settings = self.video_store.get_child_settings(cid)
+        sched_start, sched_end = resolve_day_schedule(all_settings, tz)
         if sched_start or sched_end:
             allowed, unlock = is_within_schedule(sched_start, sched_end, tz)
             start_fmt = format_time_12h(sched_start) if sched_start else "midnight"
             end_fmt = format_time_12h(sched_end) if sched_end else "midnight"
             status = "Active" if allowed else f"Locked (opens {unlock})"
-            lines.append(f"\nSchedule: {start_fmt} — {end_fmt}")
+            lines.append(f"\nToday's schedule: {start_fmt} — {end_fmt}")
             lines.append(f"Status: {status}")
+
+        # Show per-day overrides if any
+        has_per_day = False
+        for day in _DAY_NAMES:
+            raw = all_settings.get(f"schedule:{day}", "")
+            if raw:
+                try:
+                    data = _json.loads(raw)
+                    s = format_time_12h(data.get("start", ""))
+                    e = format_time_12h(data.get("end", ""))
+                    if not has_per_day:
+                        lines.append("\n<b>Per-day schedules:</b>")
+                        has_per_day = True
+                    lines.append(f"  {day.capitalize()}: {s} — {e}")
+                except (ValueError, _json.JSONDecodeError):
+                    pass
+        default_raw = all_settings.get("schedule:default", "")
+        if default_raw:
+            try:
+                data = _json.loads(default_raw)
+                s = format_time_12h(data.get("start", ""))
+                e = format_time_12h(data.get("end", ""))
+                if not has_per_day:
+                    lines.append("\n<b>Per-day schedules:</b>")
+                lines.append(f"  Default: {s} — {e}")
+            except (ValueError, _json.JSONDecodeError):
+                pass
 
         await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 

@@ -326,7 +326,7 @@ struct TimeStatusTests {
     @Test("Decode schedule status — within window")
     func decodeScheduleStatusAllowed() throws {
         let json = """
-        {"allowed":true,"unlock_time":"","start":"8:00 AM","end":"8:00 PM"}
+        {"allowed":true,"unlock_time":"","start":"8:00 AM","end":"8:00 PM","minutes_remaining":120}
         """.data(using: .utf8)!
 
         let schedule = try JSONDecoder().decode(ScheduleStatus.self, from: json)
@@ -334,12 +334,13 @@ struct TimeStatusTests {
         #expect(schedule.unlockTime == "")
         #expect(schedule.start == "8:00 AM")
         #expect(schedule.end == "8:00 PM")
+        #expect(schedule.minutesRemaining == 120)
     }
 
     @Test("Decode schedule status — outside window")
     func decodeScheduleStatusBlocked() throws {
         let json = """
-        {"allowed":false,"unlock_time":"8:00 AM","start":"8:00 AM","end":"8:00 PM"}
+        {"allowed":false,"unlock_time":"8:00 AM","start":"8:00 AM","end":"8:00 PM","minutes_remaining":-1}
         """.data(using: .utf8)!
 
         let schedule = try JSONDecoder().decode(ScheduleStatus.self, from: json)

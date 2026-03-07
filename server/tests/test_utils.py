@@ -4,8 +4,17 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import json
 import pytest
-from utils import parse_time_input, format_time_12h, get_today_str, get_day_utc_bounds
+from utils import (
+    parse_time_input,
+    format_time_12h,
+    get_today_str,
+    get_day_utc_bounds,
+    resolve_day_schedule,
+    minutes_until_schedule_end,
+    _DAY_NAMES,
+)
 
 
 class TestParseTimeInput:
@@ -96,3 +105,67 @@ class TestGetDayUtcBounds:
         start, end = get_day_utc_bounds("2024-06-15", "Invalid/TZ")
         assert start == "2024-06-15"
         assert end == "2024-06-16"
+
+
+class TestResolveDaySchedule:
+    def test_empty_settings(self):
+        start, end = resolve_day_schedule({})
+        assert start == ""
+        assert end == ""
+
+    def test_legacy_fallback(self):
+        settings = {"schedule_start": "08:00", "schedule_end": "20:00"}
+        start, end = resolve_day_schedule(settings)
+        assert start == "08:00"
+        assert end == "20:00"
+
+    def test_default_schedule(self):
+        settings = {
+            "schedule:default": json.dumps({"start": "09:00", "end": "21:00"}),
+            "schedule_start": "08:00",
+            "schedule_end": "20:00",
+        }
+        start, end = resolve_day_schedule(settings)
+        assert start == "09:00"
+        assert end == "21:00"
+
+    def test_per_day_overrides_default(self):
+        from datetime import datetime, timezone
+        day_name = _DAY_NAMES[datetime.now(timezone.utc).weekday()]
+        settings = {
+            "schedule:default": json.dumps({"start": "09:00", "end": "21:00"}),
+            f"schedule:{day_name}": json.dumps({"start": "15:00", "end": "19:00"}),
+        }
+        start, end = resolve_day_schedule(settings)
+        assert start == "15:00"
+        assert end == "19:00"
+
+    def test_invalid_json_falls_through(self):
+        from datetime import datetime, timezone
+        day_name = _DAY_NAMES[datetime.now(timezone.utc).weekday()]
+        settings = {
+            f"schedule:{day_name}": "not-json",
+            "schedule_start": "08:00",
+            "schedule_end": "20:00",
+        }
+        start, end = resolve_day_schedule(settings)
+        assert start == "08:00"
+        assert end == "20:00"
+
+
+class TestMinutesUntilScheduleEnd:
+    def test_no_end_time(self):
+        assert minutes_until_schedule_end("") == -1
+
+    def test_invalid_format(self):
+        assert minutes_until_schedule_end("garbage") == -1
+
+    def test_returns_positive_when_before_end(self):
+        # Use a far-future time that's always ahead
+        result = minutes_until_schedule_end("23:59")
+        assert result >= 0
+
+    def test_wraps_around_midnight(self):
+        # End time of 00:00 (midnight) — should wrap
+        result = minutes_until_schedule_end("00:00")
+        assert result >= 0

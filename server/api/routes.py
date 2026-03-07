@@ -36,7 +36,14 @@ from api.models import (
     TimeStatusResponse,
     ScheduleStatusResponse,
 )
-from utils import get_today_str, get_day_utc_bounds, is_within_schedule, format_time_12h
+from utils import (
+    get_today_str,
+    get_day_utc_bounds,
+    is_within_schedule,
+    format_time_12h,
+    resolve_day_schedule,
+    minutes_until_schedule_end,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +373,15 @@ async def get_stream(
     status = video_store.get_video_status(child_id, video_id)
     if status != "approved":
         raise HTTPException(status_code=403, detail="Video not approved for this child")
+
+    # Enforce schedule window — reject streams outside allowed hours
+    tz = config.watch_limits.timezone
+    all_settings = video_store.get_child_settings(child_id)
+    sched_start, sched_end = resolve_day_schedule(all_settings, tz)
+    if sched_start or sched_end:
+        allowed, _ = is_within_schedule(sched_start, sched_end, tz)
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Outside allowed viewing hours")
 
     # Fetch video metadata once — used for all quality tiers
     video = await invidious_client.get_video(video_id)
@@ -698,10 +714,10 @@ async def watch_heartbeat(request: Request, body: HeartbeatBody):
     if status != "approved":
         raise HTTPException(status_code=400, detail="Video not approved")
 
-    # Check schedule window
+    # Check schedule window (per-day schedules take priority)
     tz = config.watch_limits.timezone
-    schedule_start = video_store.get_child_setting(body.child_id, "schedule_start", "")
-    schedule_end = video_store.get_child_setting(body.child_id, "schedule_end", "")
+    all_settings = video_store.get_child_settings(body.child_id)
+    schedule_start, schedule_end = resolve_day_schedule(all_settings, tz)
     if schedule_start or schedule_end:
         allowed, _ = is_within_schedule(schedule_start, schedule_end, tz)
         if not allowed:
@@ -813,20 +829,23 @@ async def schedule_status(child_id: int = Query(..., gt=0)):
         raise HTTPException(status_code=404, detail="Child not found")
 
     tz = config.watch_limits.timezone
-    start = video_store.get_child_setting(child_id, "schedule_start", "")
-    end = video_store.get_child_setting(child_id, "schedule_end", "")
+    all_settings = video_store.get_child_settings(child_id)
+    start, end = resolve_day_schedule(all_settings, tz)
 
     if not start and not end:
         return ScheduleStatusResponse(
-            allowed=True, unlock_time="", start="", end=""
+            allowed=True, unlock_time="", start="", end="",
+            minutes_remaining=-1,
         )
 
     allowed, unlock_time = is_within_schedule(start, end, tz)
+    mins_remaining = minutes_until_schedule_end(end, tz) if allowed else -1
     return ScheduleStatusResponse(
         allowed=allowed,
         unlock_time=unlock_time,
         start=format_time_12h(start) if start else "midnight",
         end=format_time_12h(end) if end else "midnight",
+        minutes_remaining=mins_remaining,
     )
 
 

@@ -181,3 +181,93 @@ def is_within_schedule(
 
     unlock_time = format_time_12h(start_str) if not allowed else ""
     return (allowed, unlock_time)
+
+
+# ── Per-Day Schedule Helpers ────────────────────────────────────────
+
+# Day names used as keys in child_settings (schedule:monday, etc.)
+_DAY_NAMES = [
+    "monday", "tuesday", "wednesday", "thursday",
+    "friday", "saturday", "sunday",
+]
+
+
+def resolve_day_schedule(
+    settings: dict[str, str], tz_name: str = ""
+) -> tuple[str, str]:
+    """Resolve the start/end times for today from per-day or default schedule.
+
+    Checks for ``schedule:<dayname>`` keys first (e.g. ``schedule:monday``),
+    then falls back to ``schedule:default``, then to the legacy
+    ``schedule_start``/``schedule_end`` keys.
+
+    Per-day values are JSON: ``{"start": "15:00", "end": "19:00"}``.
+
+    Returns (start_hhmm, end_hhmm) — both empty if no schedule is configured.
+    """
+    import json
+
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            now = datetime.now(timezone.utc)
+    else:
+        now = datetime.now(timezone.utc)
+
+    day_name = _DAY_NAMES[now.weekday()]
+
+    # 1. Try schedule:<dayname>
+    day_key = f"schedule:{day_name}"
+    if day_key in settings and settings[day_key]:
+        try:
+            data = json.loads(settings[day_key])
+            return (data.get("start", ""), data.get("end", ""))
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    # 2. Try schedule:default
+    default_key = "schedule:default"
+    if default_key in settings and settings[default_key]:
+        try:
+            data = json.loads(settings[default_key])
+            return (data.get("start", ""), data.get("end", ""))
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    # 3. Fall back to legacy schedule_start / schedule_end
+    return (settings.get("schedule_start", ""), settings.get("schedule_end", ""))
+
+
+def minutes_until_schedule_end(end_str: str, tz_name: str = "") -> int:
+    """Calculate minutes remaining until the schedule window ends.
+
+    Returns -1 if no end time is set.  Handles cross-midnight correctly
+    (wraps around by adding 24h).
+    """
+    if not end_str:
+        return -1
+
+    try:
+        eh, em = map(int, end_str.split(":"))
+    except (ValueError, AttributeError):
+        return -1
+
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            now = datetime.now(timezone.utc)
+    else:
+        now = datetime.now(timezone.utc)
+
+    now_minutes = now.hour * 60 + now.minute
+    end_minutes = eh * 60 + em
+
+    diff = end_minutes - now_minutes
+    if diff < 0:
+        diff += 24 * 60  # crosses midnight
+
+    return diff
