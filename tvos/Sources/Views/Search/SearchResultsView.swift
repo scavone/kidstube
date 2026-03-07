@@ -114,11 +114,11 @@ struct SearchResultsView: View {
                 duration: result.formattedDuration,
                 badge: statusBadge(result)
             )
+            .onLongPressGesture(minimumDuration: 0.5) {
+                infoItem = VideoInfoItem(id: result.videoId, childId: child.id)
+            }
 
             actionButton(result)
-        }
-        .onLongPressGesture {
-            infoItem = VideoInfoItem(id: result.videoId, childId: child.id)
         }
     }
 

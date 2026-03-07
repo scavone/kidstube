@@ -125,6 +125,8 @@ struct VideoCard: View {
 /// Conditionally applies focus tracking and scale effect.
 /// When `tracksFocus` is false, the view is not focusable (avoids stealing
 /// focus from a parent Button on tvOS).
+/// When true, uses `.focusable()` so the card can receive tap and long-press
+/// gestures directly on tvOS without a wrapping Button.
 private struct FocusScaleModifier: ViewModifier {
     let tracksFocus: Bool
     @FocusState private var isFocused: Bool
@@ -132,6 +134,7 @@ private struct FocusScaleModifier: ViewModifier {
     func body(content: Content) -> some View {
         if tracksFocus {
             content
+                .focusable()
                 .scaleEffect(isFocused ? 1.05 : 1.0)
                 .animation(.easeInOut(duration: 0.15), value: isFocused)
                 .focused($isFocused)

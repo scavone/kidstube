@@ -113,20 +113,18 @@ struct HomeView: View {
                         let row = videoRows[rowIndex]
                         HStack(spacing: 30) {
                             ForEach(row) { video in
-                                Button {
-                                    onVideoSelected(video)
-                                } label: {
-                                    VideoCard(
-                                        title: video.title,
-                                        channelName: video.channelName,
-                                        thumbnailUrl: video.thumbnailUrl,
-                                        duration: video.formattedDuration,
-                                        tracksFocus: false
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                .onLongPressGesture {
+                                VideoCard(
+                                    title: video.title,
+                                    channelName: video.channelName,
+                                    thumbnailUrl: video.thumbnailUrl,
+                                    duration: video.formattedDuration,
+                                    tracksFocus: true
+                                )
+                                .onLongPressGesture(minimumDuration: 0.5) {
                                     infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
+                                }
+                                .onTapGesture {
+                                    onVideoSelected(video)
                                 }
                                 .onAppear {
                                     // Infinite scroll: load more when near the end

@@ -129,11 +129,11 @@ struct ChannelDetailView: View {
                 duration: video.formattedDuration,
                 badge: statusBadge(video)
             )
+            .onLongPressGesture(minimumDuration: 0.5) {
+                infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
+            }
 
             actionButton(video)
-        }
-        .onLongPressGesture {
-            infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
         }
     }
 
