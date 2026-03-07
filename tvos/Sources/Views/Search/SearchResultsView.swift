@@ -13,6 +13,7 @@ struct SearchResultsView: View {
 
     @StateObject private var viewModel = SearchResultsViewModel()
     @State private var columnCount = 4
+    @State private var infoItem: VideoInfoItem?
 
     private var resultRows: [[SearchItem]] {
         let cols = max(1, columnCount)
@@ -86,6 +87,9 @@ struct SearchResultsView: View {
         .task {
             await viewModel.search(query: query, childId: child.id)
         }
+        .sheet(item: $infoItem) { item in
+            VideoInfoSheet(videoId: item.id, childId: item.childId)
+        }
     }
 
     @ViewBuilder
@@ -112,6 +116,9 @@ struct SearchResultsView: View {
             )
 
             actionButton(result)
+        }
+        .onLongPressGesture {
+            infoItem = VideoInfoItem(id: result.videoId, childId: child.id)
         }
     }
 

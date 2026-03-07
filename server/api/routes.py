@@ -223,6 +223,7 @@ async def search_videos(
                         thumbnail_url=r.get("thumbnail_url"),
                         duration=r.get("duration"),
                         published_at=r.get("published"),
+                        description=r.get("description"),
                     )
                     video_store.request_video(child_id, vid)  # auto-approves
                     status = "approved"
@@ -231,6 +232,56 @@ async def search_videos(
 
     video_store.record_search(q, child_id, len(results))
     return {"results": results, "query": q}
+
+
+# ── Video Detail ─────────────────────────────────────────────────────
+
+@router.get("/video/{video_id}")
+async def get_video_detail(
+    video_id: str,
+    child_id: int = Query(..., gt=0),
+):
+    """Return full video metadata including description.
+
+    Fetches from Invidious on-demand if the description isn't stored yet,
+    and backfills it into the database for future requests.
+    """
+    if not VIDEO_ID_RE.match(video_id):
+        raise HTTPException(status_code=400, detail="Invalid video ID format")
+
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    video = video_store.get_video(video_id)
+
+    # If we have the video locally but missing description, fetch from Invidious
+    if video and not video.get("description"):
+        metadata = await invidious_client.get_video(video_id)
+        if metadata and metadata.get("description"):
+            video_store.update_description(video_id, metadata["description"])
+            video["description"] = metadata["description"]
+    elif not video:
+        # Video not in DB at all — fetch from Invidious
+        metadata = await invidious_client.get_video(video_id)
+        if not metadata:
+            raise HTTPException(status_code=404, detail="Video not found")
+        video = video_store.add_video(
+            video_id=metadata["video_id"],
+            title=metadata["title"],
+            channel_name=metadata["channel_name"],
+            channel_id=metadata.get("channel_id"),
+            thumbnail_url=metadata.get("thumbnail_url"),
+            duration=metadata.get("duration"),
+            published_at=metadata.get("published"),
+            description=metadata.get("description"),
+        )
+
+    # Include access status for the child
+    status = video_store.get_video_status(child_id, video_id)
+    video["access_status"] = status
+
+    return video
 
 
 # ── Request Video ───────────────────────────────────────────────────
@@ -259,6 +310,7 @@ async def request_video(request: Request, body: VideoRequestBody):
             thumbnail_url=metadata.get("thumbnail_url"),
             duration=metadata.get("duration"),
             published_at=metadata.get("published"),
+            description=metadata.get("description"),
         )
 
     status = video_store.request_video(body.child_id, body.video_id)
@@ -519,6 +571,7 @@ async def get_channel_videos(
                     thumbnail_url=v.get("thumbnail_url"),
                     duration=v.get("duration"),
                     published_at=v.get("published"),
+                    description=v.get("description"),
                 )
                 video_store.request_video(child_id, vid)
                 status = "approved"

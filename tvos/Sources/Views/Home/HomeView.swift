@@ -11,6 +11,7 @@ struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
     @State private var searchText = ""
     @State private var columnCount = 4
+    @State private var infoItem: VideoInfoItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,6 +37,9 @@ struct HomeView: View {
         }
         .onChange(of: refreshTrigger) {
             Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+        }
+        .sheet(item: $infoItem) { item in
+            VideoInfoSheet(videoId: item.id, childId: item.childId)
         }
     }
 
@@ -121,6 +125,9 @@ struct HomeView: View {
                                     )
                                 }
                                 .buttonStyle(.plain)
+                                .onLongPressGesture {
+                                    infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
+                                }
                                 .onAppear {
                                     // Infinite scroll: load more when near the end
                                     if video.videoId == viewModel.videos.last?.videoId && viewModel.hasMore {

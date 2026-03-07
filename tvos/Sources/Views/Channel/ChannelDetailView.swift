@@ -11,6 +11,7 @@ struct ChannelDetailView: View {
 
     @StateObject private var viewModel = ChannelDetailViewModel()
     @State private var columnCount = 4
+    @State private var infoItem: VideoInfoItem?
 
     private var videoRows: [[SearchResult]] {
         let cols = max(1, columnCount)
@@ -83,6 +84,9 @@ struct ChannelDetailView: View {
         .task {
             await viewModel.loadVideos(channelId: channel.channelId, childId: child.id)
         }
+        .sheet(item: $infoItem) { item in
+            VideoInfoSheet(videoId: item.id, childId: item.childId)
+        }
     }
 
     private var channelHeader: some View {
@@ -127,6 +131,9 @@ struct ChannelDetailView: View {
             )
 
             actionButton(video)
+        }
+        .onLongPressGesture {
+            infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
         }
     }
 

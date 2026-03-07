@@ -80,6 +80,13 @@ final class APIClient: Sendable {
         return response.videos
     }
 
+    // MARK: - Video Detail
+
+    /// Fetch full video metadata including description.
+    func getVideoDetail(videoId: String, childId: Int) async throws -> Video {
+        return try await get("/api/video/\(videoId)", query: ["child_id": String(childId)])
+    }
+
     // MARK: - Video Requests
 
     /// Request access to a video for a child.

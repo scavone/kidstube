@@ -11,10 +11,13 @@ struct Video: Codable, Identifiable, Equatable {
     var thumbnailUrl: String?
     var duration: Int?
     var category: String?
+    var description: String?
 
     /// Only present in catalog responses.
     var effectiveCategory: String?
     var accessDecidedAt: String?
+    /// Only present in video detail responses.
+    var accessStatus: String?
 
     var id: String { videoId }
 
@@ -37,8 +40,9 @@ struct Video: Codable, Identifiable, Equatable {
         case channelName = "channel_name"
         case channelId = "channel_id"
         case thumbnailUrl = "thumbnail_url"
-        case duration, category
+        case duration, category, description
         case effectiveCategory = "effective_category"
         case accessDecidedAt = "access_decided_at"
+        case accessStatus = "access_status"
     }
 }

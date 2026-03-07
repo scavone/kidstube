@@ -337,6 +337,7 @@ class InvidiousClient:
             "published": item.get("published", 0),
             "view_count": item.get("viewCount", 0),
             "is_family_friendly": item.get("isFamilyFriendly", True),
+            "description": item.get("description", ""),
         }
 
     def _pick_best_stream(

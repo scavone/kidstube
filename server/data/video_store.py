@@ -153,6 +153,13 @@ class VideoStore:
             )
             self.conn.commit()
 
+        # Add description column to videos table if missing
+        if "description" not in video_columns:
+            self.conn.execute(
+                "ALTER TABLE videos ADD COLUMN description TEXT"
+            )
+            self.conn.commit()
+
         # Migrate global channels -> per-child channels for existing databases.
         # Copy any global channel entries that don't yet exist in child_channels
         # for each child, then leave the global table intact (unused going forward).
@@ -337,14 +344,15 @@ class VideoStore:
         duration: Optional[int] = None,
         category: Optional[str] = None,
         published_at: Optional[int] = None,
+        description: Optional[str] = None,
     ) -> dict:
         """Add a video to the catalog. If it already exists, return existing."""
         with self._lock:
             self.conn.execute(
                 """INSERT OR IGNORE INTO videos
-                   (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at),
+                   (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at, description)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at, description),
             )
             self.conn.commit()
             row = self.conn.execute(
@@ -429,6 +437,15 @@ class VideoStore:
             self.conn.execute(
                 "UPDATE videos SET published_at = ? WHERE video_id = ? AND published_at IS NULL",
                 (published_at, video_id),
+            )
+            self.conn.commit()
+
+    def update_description(self, video_id: str, description: str) -> None:
+        """Set description for a video."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE videos SET description = ? WHERE video_id = ?",
+                (description, video_id),
             )
             self.conn.commit()
 

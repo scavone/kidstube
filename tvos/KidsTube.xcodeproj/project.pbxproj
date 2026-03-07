@@ -15,6 +15,7 @@
 		44C8517A72A3920CD9659F1B /* Video.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6980148DEA0FB0DDEF91F68 /* Video.swift */; };
 		46FD2CC7964399CC1E8EAD2E /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCE7EDC4D8FC5F0A183F282C /* SearchResult.swift */; };
 		47ED0B981661351785623F11 /* TimeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CCC9AA078FCA1842183EB37 /* TimeStatus.swift */; };
+		4D969B459A104A820D7025F6 /* VideoInfoSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46AE574BBEED0F0F75BE16AB /* VideoInfoSheet.swift */; };
 		4FF9FD6E75337718D5934CEA /* MockURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AAC84BAEB70DF1B91674956 /* MockURLProtocol.swift */; };
 		563CF91396F6F6024B6C8528 /* DeniedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49608DEA95FF6F9B4CDF350F /* DeniedView.swift */; };
 		56A45348E25627616ADC3B0E /* TimesUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667203D0B3FE03608D39B936 /* TimesUpView.swift */; };
@@ -53,6 +54,7 @@
 		1981EE99523A9279B0F42B4D /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 		23EB740E49D4C98D7F1F6154 /* ConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigTests.swift; sourceTree = "<group>"; };
 		36915EFA6900A27429E58E08 /* ChannelCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelCard.swift; sourceTree = "<group>"; };
+		46AE574BBEED0F0F75BE16AB /* VideoInfoSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoInfoSheet.swift; sourceTree = "<group>"; };
 		47DB79B1757870A990CD2FB5 /* SearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultsView.swift; sourceTree = "<group>"; };
 		48F3BE9052C4FDA632DD4069 /* PlayerOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerOverlayView.swift; sourceTree = "<group>"; };
 		49608DEA95FF6F9B4CDF350F /* DeniedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeniedView.swift; sourceTree = "<group>"; };
@@ -241,6 +243,7 @@
 				36915EFA6900A27429E58E08 /* ChannelCard.swift */,
 				B3AEC626AEF1ABEA4CD02E20 /* TimeBadge.swift */,
 				B07F3A96BBD823D62CCBC29F /* VideoCard.swift */,
+				46AE574BBEED0F0F75BE16AB /* VideoInfoSheet.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -370,6 +373,7 @@
 				56A45348E25627616ADC3B0E /* TimesUpView.swift in Sources */,
 				44C8517A72A3920CD9659F1B /* Video.swift in Sources */,
 				15B22913202F07EE360413E3 /* VideoCard.swift in Sources */,
+				4D969B459A104A820D7025F6 /* VideoInfoSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
