@@ -27,6 +27,13 @@ class UpdateChildBody(BaseModel):
     avatar: Optional[str] = Field(default=None, max_length=10)
 
 
+class WatchPositionBody(BaseModel):
+    video_id: str = Field(..., min_length=1, max_length=20)
+    child_id: int = Field(..., gt=0)
+    position: int = Field(..., ge=0)
+    duration: int = Field(..., ge=0)
+
+
 class ImportStarterChannelsBody(BaseModel):
     handles: list[str] = Field(..., min_length=1)
     child_id: int = Field(..., gt=0)

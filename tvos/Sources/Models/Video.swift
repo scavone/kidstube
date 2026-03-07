@@ -19,6 +19,11 @@ struct Video: Codable, Identifiable, Equatable {
     /// Only present in video detail responses.
     var accessStatus: String?
 
+    /// Watch position tracking (resume playback).
+    var watchPosition: Int?
+    var watchDuration: Int?
+    var lastWatchedAt: String?
+
     var id: String { videoId }
 
     /// Human-readable duration string (e.g. "3:45" or "1:02:30").
@@ -44,5 +49,27 @@ struct Video: Codable, Identifiable, Equatable {
         case effectiveCategory = "effective_category"
         case accessDecidedAt = "access_decided_at"
         case accessStatus = "access_status"
+        case watchPosition = "watch_position"
+        case watchDuration = "watch_duration"
+        case lastWatchedAt = "last_watched_at"
+    }
+
+    /// Whether this video has a saved position worth resuming from (at least 5 seconds in).
+    var hasResumePosition: Bool {
+        guard let pos = watchPosition, let dur = watchDuration, pos >= 5, dur > 0 else { return false }
+        // Don't offer resume if within last 5 seconds (effectively finished)
+        return pos < dur - 5
+    }
+
+    /// Formatted resume position string (e.g. "3:45").
+    var formattedResumePosition: String {
+        guard let pos = watchPosition, pos > 0 else { return "" }
+        let hours = pos / 3600
+        let minutes = (pos % 3600) / 60
+        let seconds = pos % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }

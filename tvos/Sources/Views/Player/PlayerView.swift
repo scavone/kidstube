@@ -5,20 +5,23 @@ import AVKit
 /// - Fetches a fresh stream URL from the server
 /// - Uses native tvOS playback controls (play/pause/scrub via Siri Remote)
 /// - Runs heartbeat timer for watch time tracking
+/// - Saves playback position periodically and on exit for resume support
 /// - Monitors time limits and schedule windows
 struct PlayerView: View {
-    let videoId: String
-    let videoTitle: String
+    let video: Video
     let child: ChildProfile
     let onTimesUp: () -> Void
     let onOutsideSchedule: () -> Void
     let onDismiss: () -> Void
 
     @StateObject private var viewModel = PlayerViewModel()
+    @State private var showResumePrompt: Bool = false
 
     var body: some View {
         ZStack {
-            if viewModel.isLoading {
+            if showResumePrompt {
+                resumePrompt
+            } else if viewModel.isLoading {
                 loadingState
             } else if let errorMessage = viewModel.errorMessage {
                 errorState(errorMessage)
@@ -27,10 +30,15 @@ struct PlayerView: View {
             }
         }
         .task {
-            await viewModel.loadAndPlay(
-                videoId: videoId,
-                childId: child.id
-            )
+            if video.hasResumePosition {
+                showResumePrompt = true
+            } else {
+                await viewModel.loadAndPlay(
+                    videoId: video.videoId,
+                    childId: child.id,
+                    resumePosition: nil
+                )
+            }
         }
         .onDisappear {
             viewModel.cleanup()
@@ -49,6 +57,69 @@ struct PlayerView: View {
         }
     }
 
+    // MARK: - Resume Prompt
+
+    private var resumePrompt: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 30) {
+                Text(video.title)
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 80)
+
+                Text("You were watching this video")
+                    .font(.headline)
+                    .foregroundColor(.gray)
+
+                HStack(spacing: 40) {
+                    Button {
+                        showResumePrompt = false
+                        Task {
+                            await viewModel.loadAndPlay(
+                                videoId: video.videoId,
+                                childId: child.id,
+                                resumePosition: video.watchPosition
+                            )
+                        }
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 48))
+                            Text("Resume from \(video.formattedResumePosition)")
+                                .font(.callout)
+                        }
+                        .frame(width: 260, height: 120)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        showResumePrompt = false
+                        Task {
+                            await viewModel.loadAndPlay(
+                                videoId: video.videoId,
+                                childId: child.id,
+                                resumePosition: nil
+                            )
+                        }
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "arrow.counterclockwise.circle.fill")
+                                .font(.system(size: 48))
+                            Text("Start Over")
+                                .font(.callout)
+                        }
+                        .frame(width: 260, height: 120)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
     // MARK: - Loading
 
     private var loadingState: some View {
@@ -59,7 +130,7 @@ struct PlayerView: View {
                 ProgressView()
                     .scaleEffect(2.0)
                     .tint(.white)
-                Text(videoTitle)
+                Text(video.title)
                     .font(.title3)
                     .foregroundColor(.white)
                     .lineLimit(2)
@@ -93,7 +164,11 @@ struct PlayerView: View {
                 HStack(spacing: 30) {
                     Button("Retry") {
                         Task {
-                            await viewModel.loadAndPlay(videoId: videoId, childId: child.id)
+                            await viewModel.loadAndPlay(
+                                videoId: video.videoId,
+                                childId: child.id,
+                                resumePosition: nil
+                            )
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -147,14 +222,19 @@ final class PlayerViewModel: ObservableObject {
 
     private let apiClient: APIClient
     private var hlsSessionId: String?
+    private var positionSaveTask: Task<Void, Never>?
+    private var videoId: String = ""
+    private var childId: Int = 0
 
     init(apiClient: APIClient = APIClient()) {
         self.apiClient = apiClient
     }
 
-    func loadAndPlay(videoId: String, childId: Int) async {
+    func loadAndPlay(videoId: String, childId: Int, resumePosition: Int?) async {
         isLoading = true
         errorMessage = nil
+        self.videoId = videoId
+        self.childId = childId
 
         do {
             let (streamUrl, sessionId) = try await apiClient.getStreamURL(videoId: videoId, childId: childId)
@@ -167,10 +247,20 @@ final class PlayerViewModel: ObservableObject {
 
             let avPlayer = AVPlayer(url: url)
             self.player = avPlayer
+
+            // Seek to resume position if provided
+            if let pos = resumePosition, pos > 0 {
+                let targetTime = CMTime(seconds: Double(pos), preferredTimescale: 1)
+                await avPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 2, preferredTimescale: 1))
+            }
+
             avPlayer.play()
 
             // Start heartbeat tracking
             heartbeat.start(videoId: videoId, childId: childId)
+
+            // Start periodic position saving (every 15 seconds)
+            startPositionSaving()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -180,9 +270,14 @@ final class PlayerViewModel: ObservableObject {
     func pause() {
         player?.pause()
         heartbeat.stop()
+        saveCurrentPosition()
     }
 
     func cleanup() {
+        // Save position before tearing down
+        saveCurrentPosition()
+        positionSaveTask?.cancel()
+        positionSaveTask = nil
         player?.pause()
         player = nil
         heartbeat.stop()
@@ -194,4 +289,40 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Position Saving
+
+    private func startPositionSaving() {
+        positionSaveTask?.cancel()
+        positionSaveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000) // 15 seconds
+                guard !Task.isCancelled else { break }
+                self?.saveCurrentPosition()
+            }
+        }
+    }
+
+    private func saveCurrentPosition() {
+        guard let player, !videoId.isEmpty, childId > 0 else { return }
+        let currentTime = player.currentTime()
+        let position = Int(currentTime.seconds)
+        guard position > 0, currentTime.seconds.isFinite else { return }
+
+        let totalDuration: Int
+        if let dur = player.currentItem?.duration, dur.seconds.isFinite, dur.seconds > 0 {
+            totalDuration = Int(dur.seconds)
+        } else {
+            totalDuration = 0
+        }
+
+        let vid = videoId
+        let cid = childId
+        let client = apiClient
+        Task {
+            await client.saveWatchPosition(
+                videoId: vid, childId: cid,
+                position: position, duration: totalDuration
+            )
+        }
+    }
 }

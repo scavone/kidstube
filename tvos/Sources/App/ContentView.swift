@@ -27,7 +27,7 @@ struct ContentView: View {
                             child: child,
                             refreshTrigger: catalogRefreshTrigger,
                             onVideoSelected: { video in
-                                playApprovedVideo(videoId: video.videoId, title: video.title)
+                                playVideo(video)
                             },
                             onSearchSubmitted: { query in
                                 screen = .search(query: query)
@@ -45,7 +45,7 @@ struct ContentView: View {
                             query: query,
                             child: child,
                             onWatch: { videoId in
-                                playApprovedVideo(videoId: videoId, title: query)
+                                playVideoById(videoId: videoId, title: query)
                             },
                             onRequest: { result in
                                 requestVideo(result)
@@ -63,7 +63,7 @@ struct ContentView: View {
                             channel: channel,
                             child: child,
                             onWatch: { videoId in
-                                playApprovedVideo(videoId: videoId, title: channel.name)
+                                playVideoById(videoId: videoId, title: channel.name)
                             },
                             onRequest: { result in
                                 requestVideo(result)
@@ -81,7 +81,7 @@ struct ContentView: View {
                             videoTitle: title,
                             child: child,
                             onApproved: { approvedId in
-                                playApprovedVideo(videoId: approvedId, title: title)
+                                playVideoById(videoId: approvedId, title: title)
                             },
                             onDenied: {
                                 screen = .denied
@@ -113,8 +113,7 @@ struct ContentView: View {
         }
         .fullScreenCover(item: $playerItem) { item in
             PlayerView(
-                videoId: item.videoId,
-                videoTitle: item.title,
+                video: item.video,
                 child: item.child,
                 onTimesUp: {
                     playerItem = nil
@@ -134,11 +133,18 @@ struct ContentView: View {
 
     // MARK: - Navigation Helpers
 
-    private func playApprovedVideo(videoId: String, title: String) {
-        pendingVideoId = videoId
-        pendingVideoTitle = title
+    /// Play a video from the catalog (carries watch position data for resume).
+    private func playVideo(_ video: Video) {
+        pendingVideoId = video.videoId
+        pendingVideoTitle = video.title
         guard let child = selectedChild else { return }
-        playerItem = PlayerItem(videoId: videoId, title: title, child: child)
+        playerItem = PlayerItem(video: video, child: child)
+    }
+
+    /// Play a video by ID only (no watch position data — e.g. from search or pending).
+    private func playVideoById(videoId: String, title: String) {
+        let video = Video(videoId: videoId, title: title, channelName: "")
+        playVideo(video)
     }
 
     private func requestVideo(_ result: SearchResult) {
@@ -155,7 +161,7 @@ struct ContentView: View {
                 )
                 await MainActor.run {
                     if response.status == "approved" {
-                        playerItem = PlayerItem(videoId: result.videoId, title: result.title, child: child)
+                        playVideoById(videoId: result.videoId, title: result.title)
                     } else if response.status == "denied" {
                         screen = .denied
                     } else {
@@ -174,8 +180,7 @@ struct ContentView: View {
 
 struct PlayerItem: Identifiable {
     let id = UUID()
-    let videoId: String
-    let title: String
+    let video: Video
     let child: ChildProfile
 }
 

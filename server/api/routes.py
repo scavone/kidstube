@@ -26,6 +26,7 @@ from api.auth import verify_api_key
 from api.models import (
     VideoRequestBody,
     HeartbeatBody,
+    WatchPositionBody,
     CreateChildBody,
     UpdateChildBody,
     ImportStarterChannelsBody,
@@ -277,9 +278,14 @@ async def get_video_detail(
             description=metadata.get("description"),
         )
 
-    # Include access status for the child
+    # Include access status and watch position for the child
     status = video_store.get_video_status(child_id, video_id)
     video["access_status"] = status
+
+    pos = video_store.get_watch_position(child_id, video_id)
+    video["watch_position"] = pos["watch_position"] if pos else 0
+    video["watch_duration"] = pos["watch_duration"] if pos else 0
+    video["last_watched_at"] = pos["last_watched_at"] if pos else None
 
     return video
 
@@ -723,6 +729,44 @@ async def watch_heartbeat(request: Request, body: HeartbeatBody):
     # Calculate remaining time
     remaining = _get_remaining_seconds(body.child_id)
     return HeartbeatResponse(remaining=remaining)
+
+
+# ── Watch Position (Resume Playback) ────────────────────────────────
+
+@router.post("/watch/position")
+async def save_watch_position(body: WatchPositionBody):
+    if not VIDEO_ID_RE.match(body.video_id):
+        raise HTTPException(status_code=400, detail="Invalid video ID format")
+
+    child = video_store.get_child(body.child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    if not video_store.save_watch_position(
+        body.child_id, body.video_id, body.position, body.duration
+    ):
+        raise HTTPException(status_code=404, detail="No access record for this video")
+
+    return {"status": "saved", "video_id": body.video_id, "child_id": body.child_id}
+
+
+@router.get("/watch/position/{video_id}")
+async def get_watch_position(
+    video_id: str,
+    child_id: int = Query(..., gt=0),
+):
+    if not VIDEO_ID_RE.match(video_id):
+        raise HTTPException(status_code=400, detail="Invalid video ID format")
+
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    pos = video_store.get_watch_position(child_id, video_id)
+    if not pos:
+        return {"watch_position": 0, "watch_duration": 0, "last_watched_at": None}
+
+    return pos
 
 
 # ── Time Status ─────────────────────────────────────────────────────

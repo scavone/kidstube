@@ -604,3 +604,89 @@ class TestRequestVideoAtomic:
         child = store.add_child("Alex")
         status = store.request_video(child["id"], "nonexistent_vid")
         assert status == "pending"
+
+
+class TestWatchPosition:
+    def test_save_and_get_position(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+
+        assert store.save_watch_position(child["id"], "vid1", 120, 600)
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos is not None
+        assert pos["watch_position"] == 120
+        assert pos["watch_duration"] == 600
+        assert pos["last_watched_at"] is not None
+
+    def test_save_position_updates_existing(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+
+        store.save_watch_position(child["id"], "vid1", 60, 600)
+        store.save_watch_position(child["id"], "vid1", 120, 600)
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos["watch_position"] == 120
+
+    def test_save_position_no_access_row(self, store):
+        child = store.add_child("Alex")
+        # No video access row exists
+        result = store.save_watch_position(child["id"], "vid1", 120, 600)
+        assert result is False
+
+    def test_get_position_no_access_row(self, store):
+        child = store.add_child("Alex")
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos is None
+
+    def test_get_position_default_zero(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos is not None
+        assert pos["watch_position"] == 0
+        assert pos["watch_duration"] == 0
+        assert pos["last_watched_at"] is None
+
+    def test_clear_position(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+        store.save_watch_position(child["id"], "vid1", 120, 600)
+
+        assert store.clear_watch_position(child["id"], "vid1")
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos["watch_position"] == 0
+        assert pos["watch_duration"] == 0
+        assert pos["last_watched_at"] is None
+
+    def test_per_child_independence(self, store):
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(alex["id"], "vid1")
+        store.request_video(sam["id"], "vid1")
+
+        store.save_watch_position(alex["id"], "vid1", 120, 600)
+        store.save_watch_position(sam["id"], "vid1", 300, 600)
+
+        alex_pos = store.get_watch_position(alex["id"], "vid1")
+        sam_pos = store.get_watch_position(sam["id"], "vid1")
+        assert alex_pos["watch_position"] == 120
+        assert sam_pos["watch_position"] == 300
+
+    def test_position_in_approved_videos(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+        store.update_video_status(child["id"], "vid1", "approved")
+        store.save_watch_position(child["id"], "vid1", 120, 600)
+
+        videos, total = store.get_approved_videos(child["id"])
+        assert total == 1
+        assert videos[0]["watch_position"] == 120
+        assert videos[0]["watch_duration"] == 600
+        assert videos[0]["last_watched_at"] is not None

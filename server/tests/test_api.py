@@ -991,3 +991,125 @@ class TestPerChildLanguage:
             call_kwargs = mock_pick.call_args
             assert call_kwargs[1].get("preferred_lang") == "en" or call_kwargs[0][1] == "en"
         cfg.preferred_audio_lang = ""
+
+
+class TestWatchPositionEndpoint:
+    def test_save_position(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+
+        resp = client.post("/api/watch/position", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": child["id"],
+            "position": 120,
+            "duration": 600,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "saved"
+
+    def test_save_position_invalid_video_id(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.post("/api/watch/position", headers=auth_headers, json={
+            "video_id": "bad",
+            "child_id": 1,
+            "position": 120,
+            "duration": 600,
+        })
+        assert resp.status_code == 400
+
+    def test_save_position_child_not_found(self, client, auth_headers):
+        resp = client.post("/api/watch/position", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": 999,
+            "position": 120,
+            "duration": 600,
+        })
+        assert resp.status_code == 404
+
+    def test_save_position_no_access_row(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        resp = client.post("/api/watch/position", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": child["id"],
+            "position": 120,
+            "duration": 600,
+        })
+        assert resp.status_code == 404
+
+    def test_get_position(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+        store.save_watch_position(child["id"], "abc12345678", 120, 600)
+
+        resp = client.get(
+            "/api/watch/position/abc12345678?child_id=1",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["watch_position"] == 120
+        assert data["watch_duration"] == 600
+        assert data["last_watched_at"] is not None
+
+    def test_get_position_no_data(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        resp = client.get(
+            f"/api/watch/position/abc12345678?child_id={child['id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["watch_position"] == 0
+        assert data["watch_duration"] == 0
+
+    def test_get_position_invalid_video_id(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get(
+            "/api/watch/position/bad?child_id=1",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_catalog_includes_watch_position(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+        store.update_video_status(child["id"], "abc12345678", "approved")
+        store.save_watch_position(child["id"], "abc12345678", 120, 600)
+
+        resp = client.get(
+            f"/api/catalog?child_id={child['id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        videos = resp.json()["videos"]
+        assert len(videos) == 1
+        assert videos[0]["watch_position"] == 120
+        assert videos[0]["watch_duration"] == 600
+
+    def test_video_detail_includes_watch_position(self, client, auth_headers, store, mock_invidious):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel", description="A test video")
+        store.request_video(child["id"], "abc12345678")
+        store.update_video_status(child["id"], "abc12345678", "approved")
+        store.save_watch_position(child["id"], "abc12345678", 250, 900)
+
+        resp = client.get(
+            f"/api/video/abc12345678?child_id={child['id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["watch_position"] == 250
+        assert data["watch_duration"] == 900
+
+    def test_requires_auth(self, client):
+        resp = client.post("/api/watch/position", json={
+            "video_id": "abc12345678",
+            "child_id": 1,
+            "position": 120,
+            "duration": 600,
+        })
+        assert resp.status_code == 401

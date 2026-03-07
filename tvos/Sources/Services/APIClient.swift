@@ -154,6 +154,23 @@ final class APIClient: Sendable {
         return response.channels
     }
 
+    // MARK: - Watch Position (Resume Playback)
+
+    /// Save the current playback position for a child+video pair.
+    func saveWatchPosition(videoId: String, childId: Int, position: Int, duration: Int) async {
+        let body = WatchPositionBody(videoId: videoId, childId: childId, position: position, duration: duration)
+        do {
+            let _: [String: String] = try await post("/api/watch/position", body: body)
+        } catch {
+            // Best-effort — don't interrupt playback for position save failures
+        }
+    }
+
+    /// Get the saved playback position for a child+video pair.
+    func getWatchPosition(videoId: String, childId: Int) async throws -> WatchPositionResponse {
+        return try await get("/api/watch/position/\(videoId)", query: ["child_id": String(childId)])
+    }
+
     // MARK: - Watch Tracking
 
     /// Send a heartbeat reporting seconds watched. Returns remaining seconds.

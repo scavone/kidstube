@@ -64,6 +64,9 @@ class VideoStore:
                 status TEXT NOT NULL DEFAULT 'pending',
                 requested_at TEXT NOT NULL DEFAULT (datetime('now')),
                 decided_at TEXT,
+                watch_position INTEGER DEFAULT 0,
+                watch_duration INTEGER DEFAULT 0,
+                last_watched_at TEXT,
                 PRIMARY KEY (child_id, video_id),
                 FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
             );
@@ -157,6 +160,21 @@ class VideoStore:
         if "description" not in video_columns:
             self.conn.execute(
                 "ALTER TABLE videos ADD COLUMN description TEXT"
+            )
+            self.conn.commit()
+
+        # Add watch position tracking columns to child_video_access if missing
+        cursor = self.conn.execute("PRAGMA table_info(child_video_access)")
+        cva_columns = {row[1] for row in cursor.fetchall()}
+        if "watch_position" not in cva_columns:
+            self.conn.execute(
+                "ALTER TABLE child_video_access ADD COLUMN watch_position INTEGER DEFAULT 0"
+            )
+            self.conn.execute(
+                "ALTER TABLE child_video_access ADD COLUMN watch_duration INTEGER DEFAULT 0"
+            )
+            self.conn.execute(
+                "ALTER TABLE child_video_access ADD COLUMN last_watched_at TEXT"
             )
             self.conn.commit()
 
@@ -604,7 +622,8 @@ class VideoStore:
 
             cursor = self.conn.execute(
                 f"""SELECT v.*, COALESCE(v.category, ch.category, 'fun') as effective_category,
-                           cva.decided_at as access_decided_at
+                           cva.decided_at as access_decided_at,
+                           cva.watch_position, cva.watch_duration, cva.last_watched_at
                     FROM child_video_access cva
                     JOIN videos v ON cva.video_id = v.video_id
                     LEFT JOIN child_channels ch
@@ -616,6 +635,58 @@ class VideoStore:
                 params + [limit, offset],
             )
             return [dict(row) for row in cursor.fetchall()], total
+
+    # ── Watch Position (Resume Playback) ─────────────────────────────
+
+    def save_watch_position(self, child_id: int, video_id: str,
+                            position: int, duration: int) -> bool:
+        """Save playback position for a child+video pair.
+
+        Returns True if a matching access row existed and was updated.
+        """
+        with self._lock:
+            cursor = self.conn.execute(
+                """UPDATE child_video_access
+                   SET watch_position = ?, watch_duration = ?,
+                       last_watched_at = datetime('now')
+                   WHERE child_id = ? AND video_id = ?""",
+                (position, duration, child_id, video_id),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def get_watch_position(self, child_id: int, video_id: str) -> Optional[dict]:
+        """Get saved playback position for a child+video pair.
+
+        Returns dict with watch_position, watch_duration, last_watched_at
+        or None if no access row exists.
+        """
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT watch_position, watch_duration, last_watched_at
+                   FROM child_video_access
+                   WHERE child_id = ? AND video_id = ?""",
+                (child_id, video_id),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "watch_position": row[0] or 0,
+                "watch_duration": row[1] or 0,
+                "last_watched_at": row[2],
+            }
+
+    def clear_watch_position(self, child_id: int, video_id: str) -> bool:
+        """Clear saved playback position (e.g. when video is finished)."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """UPDATE child_video_access
+                   SET watch_position = 0, watch_duration = 0, last_watched_at = NULL
+                   WHERE child_id = ? AND video_id = ?""",
+                (child_id, video_id),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
 
     # ── Watch Time Tracking ─────────────────────────────────────────
 

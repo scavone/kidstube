@@ -92,6 +92,33 @@ struct ChannelVideosResponse: Codable {
     }
 }
 
+// MARK: - Watch Position
+
+struct WatchPositionBody: Codable {
+    let videoId: String
+    let childId: Int
+    let position: Int
+    let duration: Int
+
+    enum CodingKeys: String, CodingKey {
+        case videoId = "video_id"
+        case childId = "child_id"
+        case position, duration
+    }
+}
+
+struct WatchPositionResponse: Codable {
+    let watchPosition: Int
+    let watchDuration: Int
+    let lastWatchedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case watchPosition = "watch_position"
+        case watchDuration = "watch_duration"
+        case lastWatchedAt = "last_watched_at"
+    }
+}
+
 // MARK: - Heartbeat
 
 struct HeartbeatBody: Codable {
