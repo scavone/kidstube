@@ -903,6 +903,22 @@ class VideoStore:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_all_channels_due_for_refresh(self, interval_hours: int = 6) -> list[dict]:
+        """Return distinct allowed channels across all children due for refresh."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """SELECT channel_name, channel_id, category,
+                          MIN(last_refreshed_at) as last_refreshed_at
+                   FROM child_channels
+                   WHERE status = 'allowed' AND channel_id IS NOT NULL
+                     AND (last_refreshed_at IS NULL
+                          OR last_refreshed_at < datetime('now', ? || ' hours'))
+                   GROUP BY channel_id
+                   ORDER BY last_refreshed_at ASC NULLS FIRST""",
+                (str(-interval_hours),),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def update_channel_refreshed_at(self, child_id: int, channel_name: str) -> None:
         """Stamp the current time as last_refreshed_at for a child's channel."""
         with self._lock:
@@ -910,6 +926,16 @@ class VideoStore:
                 """UPDATE child_channels SET last_refreshed_at = datetime('now')
                    WHERE child_id = ? AND channel_name = ? COLLATE NOCASE""",
                 (child_id, channel_name),
+            )
+            self.conn.commit()
+
+    def update_all_channels_refreshed_at(self, channel_name: str) -> None:
+        """Stamp last_refreshed_at for a channel across all children."""
+        with self._lock:
+            self.conn.execute(
+                """UPDATE child_channels SET last_refreshed_at = datetime('now')
+                   WHERE channel_name = ? COLLATE NOCASE""",
+                (channel_name,),
             )
             self.conn.commit()
 

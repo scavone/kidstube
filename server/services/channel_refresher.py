@@ -63,7 +63,7 @@ async def _refresh_all_channels(
     interval_hours: int,
 ) -> int:
     """Sweep all allowed channels due for refresh. Returns total new videos."""
-    channels = store.get_channels_due_for_refresh(interval_hours)
+    channels = store.get_all_channels_due_for_refresh(interval_hours)
     if not channels:
         logger.debug("No channels due for refresh")
         return 0
@@ -89,7 +89,7 @@ async def _refresh_all_channels(
             imported = store.bulk_import_channel_videos(
                 videos, category, all_child_ids
             )
-            store.update_channel_refreshed_at(ch_name)
+            store.update_all_channels_refreshed_at(ch_name)
 
             if imported > 0:
                 total_imported += imported

@@ -1126,18 +1126,56 @@ class TelegramBot:
         # /channel [ChildName] allow <name> [category]
         if subcmd == "allow" and len(sub_args) >= 2:
             rest = sub_args[1:]
-            if rest[-1].lower() in ("edu", "fun"):
-                category = rest[-1].lower()
+            # Map category aliases → edu/fun
+            _CAT_MAP = {
+                "edu": "edu", "educational": "edu", "science": "edu",
+                "fun": "fun", "music": "fun", "entertainment": "fun",
+            }
+            last_lower = rest[-1].lower()
+            if last_lower in _CAT_MAP:
+                category = _CAT_MAP[last_lower]
                 name = " ".join(rest[:-1]) if len(rest) > 1 else rest[0]
             else:
                 category = None
                 name = " ".join(rest)
-            self.video_store.add_channel(child_id, name, "allowed", category=category)
+
+            # Resolve @handle via Invidious to get channel_id and display name
+            channel_id = None
+            display_name = name
+            handle = name if name.startswith("@") else None
+            if handle and self.inv_client:
+                try:
+                    info = await self.inv_client.get_channel_info(handle)
+                    if info:
+                        channel_id = info["channel_id"]
+                        display_name = info["name"] or name
+                except Exception:
+                    logger.warning("Failed to resolve channel %s via Invidious", name)
+
+            self.video_store.add_channel(
+                child_id, display_name, "allowed",
+                channel_id=channel_id, handle=handle, category=category,
+            )
             cat_label = f" ({category})" if category else ""
             await update.effective_message.reply_text(
-                f"Channel <b>{_esc(name)}</b> allowed for {_esc(child_name)}{cat_label}.",
+                f"Channel <b>{_esc(display_name)}</b> allowed for {_esc(child_name)}{cat_label}.",
                 parse_mode=ParseMode.HTML,
             )
+
+            # Best-effort: import channel videos immediately
+            if channel_id and self.inv_client:
+                try:
+                    ch_videos = await self.inv_client.get_channel_videos(channel_id)
+                    imported = self.video_store.bulk_import_channel_videos(
+                        ch_videos, category or "fun", [child_id]
+                    )
+                    if imported > 0:
+                        await update.effective_message.reply_text(
+                            f"Imported {imported} video(s) from {_esc(display_name)}.",
+                            parse_mode=ParseMode.HTML,
+                        )
+                except Exception:
+                    logger.warning("Failed to import videos for channel %s", display_name)
 
         # /channel [ChildName] block <name>
         elif subcmd == "block" and len(sub_args) >= 2:
@@ -1358,13 +1396,34 @@ class TelegramBot:
         category = "edu" if cat_key in ("educational", "science") else "fun"
         name = info.get("name", handle)
 
+        # Resolve channel_id via Invidious for the channel refresher
+        channel_id = None
+        if self.inv_client:
+            try:
+                ch_info = await self.inv_client.get_channel_info(handle)
+                if ch_info:
+                    channel_id = ch_info["channel_id"]
+                    name = ch_info["name"] or name
+            except Exception:
+                logger.warning("Failed to resolve starter channel %s via Invidious", handle)
+
         self.video_store.add_channel(
             child_id, name, "allowed",
-            handle=info.get("handle"),
+            channel_id=channel_id, handle=info.get("handle"),
             category=category,
         )
 
         await query.answer(f"Imported {name}!")
+
+        # Best-effort: import channel videos immediately
+        if channel_id and self.inv_client:
+            try:
+                ch_videos = await self.inv_client.get_channel_videos(channel_id)
+                self.video_store.bulk_import_channel_videos(
+                    ch_videos, category, [child_id]
+                )
+            except Exception:
+                logger.warning("Failed to import videos for starter channel %s", name)
 
         # Re-render the current page
         # Determine which page this channel was on
