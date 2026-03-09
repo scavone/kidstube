@@ -277,6 +277,47 @@ class InvidiousClient:
             "description": data.get("description", ""),
         }
 
+    async def resolve_channel_by_handle(self, handle: str) -> Optional[dict]:
+        """Resolve a @handle to channel info via search.
+
+        Returns dict with: channel_id, name, handle, or None if not found.
+        Invidious /channels/ endpoint only accepts UC... IDs, so we search instead.
+        """
+        query = handle if handle.startswith("@") else f"@{handle}"
+        async with self._client() as client:
+            try:
+                resp = await client.get(
+                    "/api/v1/search",
+                    params={"q": query, "type": "channel", "sort_by": "relevance"},
+                )
+                resp.raise_for_status()
+                results = resp.json()
+            except Exception:
+                return None
+
+        # Match by authorUrl containing the handle
+        handle_lower = handle.lstrip("@").lower()
+        for item in results:
+            author_url = item.get("authorUrl", "")
+            # authorUrl is typically "/@handle" or "/channel/UCxxx"
+            url_handle = author_url.rstrip("/").split("/")[-1].lstrip("@").lower()
+            if url_handle == handle_lower:
+                return {
+                    "channel_id": item.get("authorId"),
+                    "name": item.get("author", ""),
+                    "handle": handle,
+                }
+
+        # Fallback: return the first channel result if any
+        if results and results[0].get("type") == "channel":
+            return {
+                "channel_id": results[0].get("authorId"),
+                "name": results[0].get("author", ""),
+                "handle": handle,
+            }
+
+        return None
+
     def _normalize_channel(self, item: dict) -> Optional[dict]:
         """Convert an Invidious API channel search result to our simplified format."""
         channel_id = item.get("authorId")

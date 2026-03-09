@@ -1139,16 +1139,19 @@ class TelegramBot:
                 category = None
                 name = " ".join(rest)
 
-            # Resolve @handle via Invidious to get channel_id and display name
+            # Resolve channel via Invidious to get channel_id and display name
             channel_id = None
             display_name = name
             handle = name if name.startswith("@") else None
-            if handle and self.inv_client:
+            if self.inv_client:
                 try:
-                    info = await self.inv_client.get_channel_info(handle)
+                    info = await self.inv_client.resolve_channel_by_handle(
+                        handle or name
+                    )
                     if info:
                         channel_id = info["channel_id"]
                         display_name = info["name"] or name
+                        handle = handle or info.get("handle")
                 except Exception:
                     logger.warning("Failed to resolve channel %s via Invidious", name)
 
@@ -1400,7 +1403,7 @@ class TelegramBot:
         channel_id = None
         if self.inv_client:
             try:
-                ch_info = await self.inv_client.get_channel_info(handle)
+                ch_info = await self.inv_client.resolve_channel_by_handle(handle)
                 if ch_info:
                     channel_id = ch_info["channel_id"]
                     name = ch_info["name"] or name
