@@ -582,9 +582,18 @@ class VideoStore:
         "channel": "v.channel_name COLLATE NOCASE ASC, v.title COLLATE NOCASE ASC",
     }
 
+    # Templates for generating order clauses with explicit direction
+    _SORT_ORDER_TEMPLATES = {
+        "newest": "v.published_at IS NULL, v.published_at {dir}",
+        "oldest": "v.published_at IS NULL, v.published_at {dir}",
+        "title": "v.title COLLATE NOCASE {dir}",
+        "channel": "v.channel_name COLLATE NOCASE {dir}, v.title COLLATE NOCASE {dir}",
+    }
+
     def get_approved_videos(self, child_id: int, category: Optional[str] = None,
                             channel: Optional[str] = None,
                             sort_by: str = "newest",
+                            sort_order: Optional[str] = None,
                             offset: int = 0, limit: int = 24) -> tuple[list[dict], int]:
         """Get paginated approved videos for a child.
 
@@ -618,7 +627,14 @@ class VideoStore:
             ).fetchone()
             total = count_row[0] if count_row else 0
 
-            order_clause = self._SORT_CLAUSES.get(sort_by, self._SORT_CLAUSES["newest"])
+            if sort_order and sort_order in ("asc", "desc"):
+                direction = sort_order.upper()
+                template = self._SORT_ORDER_TEMPLATES.get(
+                    sort_by, self._SORT_ORDER_TEMPLATES["newest"]
+                )
+                order_clause = template.format(dir=direction)
+            else:
+                order_clause = self._SORT_CLAUSES.get(sort_by, self._SORT_CLAUSES["newest"])
 
             cursor = self.conn.execute(
                 f"""SELECT v.*, COALESCE(v.category, ch.category, 'fun') as effective_category,

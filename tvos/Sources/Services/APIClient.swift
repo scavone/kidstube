@@ -133,11 +133,13 @@ final class APIClient: Sendable {
         childId: Int,
         category: String? = nil,
         channel: String? = nil,
+        sortBy: String = "newest",
         offset: Int = 0,
         limit: Int = Config.catalogPageSize
     ) async throws -> CatalogResponse {
         var params: [String: String] = [
             "child_id": String(childId),
+            "sort_by": sortBy,
             "offset": String(offset),
             "limit": String(limit)
         ]

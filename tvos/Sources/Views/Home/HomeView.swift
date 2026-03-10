@@ -1,5 +1,23 @@
 import SwiftUI
 
+// MARK: - Catalog Sort
+
+enum CatalogSort: String, CaseIterable {
+    case newest
+    case oldest
+    case title
+    case channel
+
+    var label: String {
+        switch self {
+        case .newest: return "Newest"
+        case .oldest: return "Oldest"
+        case .title: return "Title"
+        case .channel: return "Channel"
+        }
+    }
+}
+
 /// Main screen after profile selection: search bar + category filters + approved video catalog.
 struct HomeView: View {
     let child: ChildProfile
@@ -30,16 +48,37 @@ struct HomeView: View {
             // Search field
             searchField
 
-            // Category filter tabs
-            CategoryFilterView(
-                selectedCategory: $viewModel.selectedCategory,
-                onChange: { _ in
-                    Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
-                }
-            )
+            // Category + Sort filter row
+            HStack(alignment: .top, spacing: 0) {
+                CategoryFilterView(
+                    selectedCategory: $viewModel.selectedCategory,
+                    onChange: { _ in
+                        Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                    }
+                )
 
-            // Catalog grid
-            catalogGrid
+                SortPickerView(
+                    selectedSort: $viewModel.selectedSort,
+                    onChange: { _ in
+                        Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                    }
+                )
+            }
+
+            // Catalog grid with optional alphabet rail
+            if viewModel.selectedSort == .title && !viewModel.videos.isEmpty {
+                HStack(spacing: 0) {
+                    catalogGrid
+                    AlphabetRailView(
+                        videos: viewModel.videos,
+                        onLetterSelected: { letter in
+                            viewModel.scrollToLetter = letter
+                        }
+                    )
+                }
+            } else {
+                catalogGrid
+            }
         }
         .task {
             await viewModel.loadInitialData(childId: child.id)
@@ -152,66 +191,84 @@ struct HomeView: View {
     }
 
     private var catalogGrid: some View {
-        ScrollView {
-            if viewModel.isLoading && viewModel.videos.isEmpty {
-                ProgressView()
-                    .scaleEffect(1.5)
-                    .padding(60)
-            } else if viewModel.videos.isEmpty {
-                emptyCatalog
-            } else {
-                LazyVStack(spacing: 30) {
-                    ForEach(0..<videoRows.count, id: \.self) { rowIndex in
-                        let row = videoRows[rowIndex]
-                        HStack(spacing: 30) {
-                            ForEach(row) { video in
-                                VideoCard(
-                                    title: video.title,
-                                    channelName: video.channelName,
-                                    thumbnailUrl: video.thumbnailUrl,
-                                    duration: video.formattedDuration,
-                                    tracksFocus: true
-                                )
-                                .onLongPressGesture(minimumDuration: 0.5) {
-                                    infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
-                                }
-                                .onTapGesture {
-                                    selectVideo(video)
-                                }
-                                .onAppear {
-                                    // Infinite scroll: load more when near the end
-                                    if video.videoId == viewModel.videos.last?.videoId && viewModel.hasMore {
-                                        Task { await viewModel.loadCatalog(childId: child.id, reset: false) }
+        ScrollViewReader { proxy in
+            ScrollView {
+                if viewModel.isLoading && viewModel.videos.isEmpty {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                        .padding(60)
+                } else if viewModel.videos.isEmpty {
+                    emptyCatalog
+                } else {
+                    LazyVStack(spacing: 30) {
+                        ForEach(0..<videoRows.count, id: \.self) { rowIndex in
+                            let row = videoRows[rowIndex]
+                            HStack(spacing: 30) {
+                                ForEach(row) { video in
+                                    VideoCard(
+                                        title: video.title,
+                                        channelName: video.channelName,
+                                        thumbnailUrl: video.thumbnailUrl,
+                                        duration: video.formattedDuration,
+                                        tracksFocus: true
+                                    )
+                                    .onLongPressGesture(minimumDuration: 0.5) {
+                                        infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
+                                    }
+                                    .onTapGesture {
+                                        selectVideo(video)
+                                    }
+                                    .onAppear {
+                                        // Infinite scroll: load more when near the end
+                                        if video.videoId == viewModel.videos.last?.videoId && viewModel.hasMore {
+                                            Task { await viewModel.loadCatalog(childId: child.id, reset: false) }
+                                        }
                                     }
                                 }
+                                Spacer(minLength: 0)
                             }
-                            Spacer(minLength: 0)
+                            .id("row-\(rowIndex)")
+                            .focusSection()
                         }
-                        .focusSection()
+                    }
+                    .padding(.horizontal, 60)
+                    .padding(.bottom, 40)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.onAppear {
+                                let cols = max(1, Int((geo.size.width + 30) / (280 + 30)))
+                                if cols != columnCount { columnCount = cols }
+                            }
+                        }
+                    )
+
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .padding()
                     }
                 }
-                .padding(.horizontal, 60)
-                .padding(.bottom, 40)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.onAppear {
-                            let cols = max(1, Int((geo.size.width + 30) / (280 + 30)))
-                            if cols != columnCount { columnCount = cols }
-                        }
-                    }
-                )
 
-                if viewModel.isLoading {
-                    ProgressView()
+                if let error = viewModel.errorMessage {
+                    Text(error)
+                        .foregroundColor(.red)
+                        .font(.caption)
                         .padding()
                 }
             }
-
-            if let error = viewModel.errorMessage {
-                Text(error)
-                    .foregroundColor(.red)
-                    .font(.caption)
-                    .padding()
+            .onChange(of: viewModel.scrollToLetter) {
+                guard let letter = viewModel.scrollToLetter else { return }
+                viewModel.scrollToLetter = nil
+                // Find the first row containing a video starting with this letter
+                let cols = max(1, columnCount)
+                if let videoIndex = viewModel.videos.firstIndex(where: {
+                    $0.title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+                        .first?.uppercased() == letter
+                }) {
+                    let rowIndex = videoIndex / cols
+                    withAnimation {
+                        proxy.scrollTo("row-\(rowIndex)", anchor: .top)
+                    }
+                }
             }
         }
     }
@@ -304,6 +361,82 @@ struct CategoryFilterView: View {
     }
 }
 
+// MARK: - Sort Picker
+
+struct SortPickerView: View {
+    @Binding var selectedSort: CatalogSort
+    let onChange: (CatalogSort) -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+
+            ForEach(CatalogSort.allCases, id: \.self) { sort in
+                Button {
+                    selectedSort = sort
+                    onChange(sort)
+                } label: {
+                    Text(sort.label)
+                        .font(.subheadline)
+                        .fontWeight(selectedSort == sort ? .bold : .regular)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            selectedSort == sort
+                                ? Color.accentColor.opacity(0.3)
+                                : Color.gray.opacity(0.1)
+                        )
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.trailing, 60)
+        .padding(.bottom, 12)
+    }
+}
+
+// MARK: - Alphabet Rail
+
+struct AlphabetRailView: View {
+    let videos: [Video]
+    let onLetterSelected: (String) -> Void
+
+    private let letters = (65...90).map { String(UnicodeScalar($0)) } // A–Z
+
+    private var availableLetters: Set<String> {
+        Set(videos.compactMap {
+            $0.title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+                .first?.uppercased()
+        }.filter { letters.contains($0) })
+    }
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 4) {
+                ForEach(letters, id: \.self) { letter in
+                    let available = availableLetters.contains(letter)
+                    Button {
+                        if available { onLetterSelected(letter) }
+                    } label: {
+                        Text(letter)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(available ? .primary : .secondary.opacity(0.3))
+                            .frame(width: 32, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!available)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .frame(width: 48)
+    }
+}
+
 // MARK: - ViewModel
 
 @MainActor
@@ -312,6 +445,8 @@ final class HomeViewModel: ObservableObject {
     @Published var timeStatus: TimeStatus?
     @Published var scheduleStatus: ScheduleStatus?
     @Published var selectedCategory: String?
+    @Published var selectedSort: CatalogSort = .newest
+    @Published var scrollToLetter: String?
     @Published var isLoading = false
     @Published var hasMore = false
     @Published var errorMessage: String?
@@ -343,6 +478,7 @@ final class HomeViewModel: ObservableObject {
             let response = try await apiClient.getCatalog(
                 childId: childId,
                 category: selectedCategory,
+                sortBy: selectedSort.rawValue,
                 offset: offset
             )
             if reset {

@@ -511,6 +511,15 @@ async def delete_hls_session(session_id: str):
 # ── Catalog ─────────────────────────────────────────────────────────
 
 _CATALOG_SORT_OPTIONS = {"newest", "oldest", "title", "channel"}
+_CATALOG_SORT_ORDERS = {"asc", "desc"}
+
+# Natural default order for each sort type
+_SORT_DEFAULT_ORDER = {
+    "newest": "desc",
+    "oldest": "asc",
+    "title": "asc",
+    "channel": "asc",
+}
 
 
 @router.get("/catalog")
@@ -519,6 +528,7 @@ async def get_catalog(
     category: str = Query("", max_length=10),
     channel: str = Query("", max_length=200),
     sort_by: str = Query("newest", max_length=20),
+    sort_order: str = Query("", max_length=4),
     offset: int = Query(0, ge=0),
     limit: int = Query(24, ge=1, le=100),
 ):
@@ -532,11 +542,19 @@ async def get_catalog(
             detail=f"Invalid sort_by. Options: {', '.join(sorted(_CATALOG_SORT_OPTIONS))}",
         )
 
+    effective_order = sort_order or None
+    if effective_order and effective_order not in _CATALOG_SORT_ORDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sort_order. Options: asc, desc",
+        )
+
     videos, total = video_store.get_approved_videos(
         child_id,
         category=category or None,
         channel=channel or None,
         sort_by=sort_by,
+        sort_order=effective_order,
         offset=offset,
         limit=limit,
     )

@@ -200,6 +200,28 @@ struct APIClientTests {
         #expect(response.total == 0)
     }
 
+    @Test("Get catalog with sort parameter")
+    func getCatalogWithSort() async throws {
+        let client = makeClient()
+        MockURLProtocol.handlers["/api/catalog"] = { request in
+            let url = request.url!
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            let sortBy = components.queryItems?.first(where: { $0.name == "sort_by" })?.value
+            #expect(sortBy == "title")
+            let data = try JSONSerialization.data(withJSONObject: [
+                "videos": [["video_id": "v1", "title": "Alpha", "channel_name": "Ch"]],
+                "has_more": false, "total": 1
+            ])
+            let response = HTTPURLResponse(
+                url: url, statusCode: 200, httpVersion: nil, headerFields: nil
+            )!
+            return (data, response)
+        }
+
+        let response = try await client.getCatalog(childId: 1, sortBy: "title")
+        #expect(response.videos.count == 1)
+    }
+
     // MARK: - Channels
 
     @Test("Get channels")

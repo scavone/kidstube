@@ -836,6 +836,43 @@ class TestCatalogSortOptions:
         resp = client.get("/api/catalog?child_id=1&sort_by=invalid", headers=auth_headers)
         assert resp.status_code == 400
 
+    def test_sort_order_desc_reverses_title(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get(
+            "/api/catalog?child_id=1&sort_by=title&sort_order=desc",
+            headers=auth_headers,
+        )
+        videos = resp.json()["videos"]
+        assert videos[0]["title"] == "Zebra Video"
+        assert videos[-1]["title"] == "Apple Video"
+
+    def test_sort_order_asc_explicit(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get(
+            "/api/catalog?child_id=1&sort_by=newest&sort_order=asc",
+            headers=auth_headers,
+        )
+        videos = resp.json()["videos"]
+        assert videos[0]["video_id"] == "vid_aaa0001"  # published_at=100 (ascending)
+
+    def test_sort_order_invalid_returns_400(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get(
+            "/api/catalog?child_id=1&sort_order=bad",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_sort_order_empty_uses_default(self, client, auth_headers, store):
+        """Empty sort_order uses the natural default for the sort type."""
+        self._setup_catalog(store)
+        resp = client.get(
+            "/api/catalog?child_id=1&sort_by=title&sort_order=",
+            headers=auth_headers,
+        )
+        videos = resp.json()["videos"]
+        assert videos[0]["title"] == "Apple Video"  # default for title is ASC
+
 
 class TestFreeDayAPI:
     """Tests for free day pass via API (#32)."""
