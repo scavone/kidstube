@@ -68,12 +68,6 @@ async def _refresh_all_channels(
         logger.debug("No channels due for refresh")
         return 0
 
-    all_children = store.get_children()
-    all_child_ids = [c["id"] for c in all_children]
-    if not all_child_ids:
-        logger.debug("No child profiles — skipping refresh")
-        return 0
-
     logger.info("Refreshing %d channel(s)", len(channels))
 
     total_imported = 0
@@ -84,10 +78,16 @@ async def _refresh_all_channels(
         ch_id = ch["channel_id"]
         category = ch.get("category") or "fun"
 
+        # Only import for children who actually have this channel allowed
+        child_ids = store.get_child_ids_for_channel(ch_name)
+        if not child_ids:
+            logger.debug("Channel %s: no children have it allowed — skipping", ch_name)
+            continue
+
         try:
             videos = await inv_client.get_channel_videos(ch_id)
             imported = store.bulk_import_channel_videos(
-                videos, category, all_child_ids
+                videos, category, child_ids
             )
             store.update_all_channels_refreshed_at(ch_name)
 

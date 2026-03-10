@@ -919,6 +919,16 @@ class VideoStore:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_child_ids_for_channel(self, channel_name: str) -> list[int]:
+        """Return child IDs that have the given channel allowed."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """SELECT child_id FROM child_channels
+                   WHERE channel_name = ? COLLATE NOCASE AND status = 'allowed'""",
+                (channel_name,),
+            )
+            return [row[0] for row in cursor.fetchall()]
+
     def get_all_channels_due_for_refresh(self, interval_hours: int = 6) -> list[dict]:
         """Return distinct allowed channels across all children due for refresh."""
         with self._lock:
