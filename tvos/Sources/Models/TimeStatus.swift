@@ -7,8 +7,12 @@ struct TimeStatus: Codable, Equatable {
     let remainingSec: Int
     let exceeded: Bool
 
+    /// Whether a free day pass is active (server sends -1).
+    var isFreeDay: Bool { remainingSec == -1 }
+
     /// Human-readable remaining time (e.g. "1h 15m" or "23m").
     var formattedRemaining: String {
+        if isFreeDay { return "Free day!" }
         if remainingSec <= 0 { return "0m" }
         let hours = remainingSec / 3600
         let minutes = (remainingSec % 3600) / 60

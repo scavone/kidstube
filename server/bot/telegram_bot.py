@@ -530,6 +530,10 @@ class TelegramBot:
             limit = int(limit_str) if limit_str else self.config.watch_limits.daily_limit_minutes
             used = self.video_store.get_daily_watch_minutes(cid, today, utc_bounds=bounds)
 
+            # Free day pass
+            free_day = self.video_store.get_child_setting(cid, "free_day_date", "")
+            is_free_day = free_day == today
+
             # Pending count
             pending = self.video_store.get_pending_requests(child_id=cid)
             pending_count = len(pending)
@@ -537,10 +541,12 @@ class TelegramBot:
             remaining = max(0, limit - used)
             bar = _progress_bar(used / limit if limit > 0 else 0)
 
+            remaining_text = "unlimited 🎉" if is_free_day else f"{remaining:.0f} min"
             lines.append(
-                f"{avatar} <b>{_esc(name)}</b>\n"
-                f"  Time: {used:.0f}/{limit} min {bar}\n"
-                f"  Remaining: {remaining:.0f} min"
+                f"{avatar} <b>{_esc(name)}</b>"
+                + (" 🎉 Free day" if is_free_day else "")
+                + f"\n  Time: {used:.0f}/{limit} min {bar}\n"
+                f"  Remaining: {remaining_text}"
                 + (f" | Pending: {pending_count}" if pending_count > 0 else "")
             )
 
@@ -1720,9 +1726,13 @@ class TelegramBot:
         tz = self.config.watch_limits.timezone
         today = get_today_str(tz)
 
+        admin = update.effective_user
+        admin_name = admin.first_name if admin else "Unknown"
+
         # /freeday [Child] off — revoke
         if sub_args and sub_args[0].lower() == "off":
             self.video_store.set_child_setting(cid, "free_day_date", "")
+            logger.info("free_day action=revoke child=%s triggered_by=%s", cname, admin_name)
             await update.effective_message.reply_text(
                 f"Free day pass <b>revoked</b> for {_esc(cname)}.",
                 parse_mode=ParseMode.HTML,
@@ -1733,12 +1743,14 @@ class TelegramBot:
         current = self.video_store.get_child_setting(cid, "free_day_date", "")
         if current == today:
             self.video_store.set_child_setting(cid, "free_day_date", "")
+            logger.info("free_day action=revoke child=%s triggered_by=%s", cname, admin_name)
             await update.effective_message.reply_text(
                 f"Free day pass <b>revoked</b> for {_esc(cname)}.",
                 parse_mode=ParseMode.HTML,
             )
         else:
             self.video_store.set_child_setting(cid, "free_day_date", today)
+            logger.info("free_day action=grant child=%s triggered_by=%s date=%s", cname, admin_name, today)
             await update.effective_message.reply_text(
                 f"Free day pass <b>granted</b> for {_esc(cname)} today! No time limits.",
                 parse_mode=ParseMode.HTML,

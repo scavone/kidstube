@@ -323,6 +323,19 @@ struct TimeStatusTests {
         #expect(s.formattedRemaining == "0m")
     }
 
+    @Test("Free day — isFreeDay true and formatted text")
+    func freeDayActive() {
+        let s = TimeStatus(limitMin: 120, usedMin: 30, remainingMin: 120, remainingSec: -1, exceeded: false)
+        #expect(s.isFreeDay)
+        #expect(s.formattedRemaining == "Free day!")
+    }
+
+    @Test("Free day — isFreeDay false for normal remaining")
+    func freeDayInactive() {
+        let s = TimeStatus(limitMin: 120, usedMin: 0, remainingMin: 120, remainingSec: 7200, exceeded: false)
+        #expect(!s.isFreeDay)
+    }
+
     @Test("Decode schedule status — within window")
     func decodeScheduleStatusAllowed() throws {
         let json = """

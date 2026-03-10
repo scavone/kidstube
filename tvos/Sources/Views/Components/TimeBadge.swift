@@ -14,7 +14,7 @@ struct TimeBadge: View {
     var body: some View {
         if let status = timeStatus {
             HStack(spacing: 6) {
-                Image(systemName: status.exceeded ? "exclamationmark.circle" : "clock")
+                Image(systemName: iconName(status))
                     .font(style == .compact ? .caption : .body)
 
                 Text(status.exceeded ? "Time's up" : status.formattedRemaining)
@@ -28,9 +28,17 @@ struct TimeBadge: View {
         }
     }
 
+    private func iconName(_ status: TimeStatus) -> String {
+        if status.exceeded { return "exclamationmark.circle" }
+        if status.isFreeDay { return "gift" }
+        return "clock"
+    }
+
     private func backgroundColor(_ status: TimeStatus) -> Color {
         if status.exceeded {
             return Color.red.opacity(0.85)
+        } else if status.isFreeDay {
+            return Color.green.opacity(0.85)
         } else if status.remainingMin <= 10 {
             return Color.orange.opacity(0.85)
         } else {

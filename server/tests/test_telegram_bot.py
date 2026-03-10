@@ -247,6 +247,19 @@ class TestKidsCommand:
         msg = admin_update.effective_message.reply_text.call_args[0][0]
         assert "Pending: 1" in msg
 
+    @pytest.mark.asyncio
+    async def test_kids_shows_free_day(self, bot, admin_update, context, store):
+        from utils import get_today_str
+        child = store.add_child("Alex")
+        tz = bot.config.watch_limits.timezone
+        today = get_today_str(tz)
+        store.set_child_setting(child["id"], "free_day_date", today)
+
+        await bot._cmd_kids(admin_update, context)
+        msg = admin_update.effective_message.reply_text.call_args[0][0]
+        assert "Free day" in msg
+        assert "unlimited" in msg
+
 
 # ── /addkid Command ───────────────────────────────────────────────
 
