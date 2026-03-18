@@ -30,6 +30,26 @@ struct PlayerView: View {
             } else if let player = viewModel.player {
                 playerContent(player)
             }
+
+            if viewModel.showWindDown {
+                WindDownOverlayView(
+                    childId: child.id,
+                    videoId: video.videoId,
+                    onStopNow: {
+                        viewModel.pause()
+                        onTimesUp()
+                    },
+                    onFinishVideo: {
+                        viewModel.enterFinishVideoMode { onTimesUp() }
+                    },
+                    onTimeGranted: {
+                        viewModel.showWindDown = false
+                        viewModel.heartbeat.isTimeExceeded = false
+                        viewModel.player?.play()
+                        viewModel.heartbeat.start(videoId: video.videoId, childId: child.id)
+                    }
+                )
+            }
         }
         .task {
             // Always fetch latest position from server (catalog data may be stale)
@@ -51,8 +71,13 @@ struct PlayerView: View {
         }
         .onChange(of: viewModel.heartbeat.isTimeExceeded) { _, exceeded in
             if exceeded {
-                viewModel.pause()
-                onTimesUp()
+                viewModel.player?.pause()
+                viewModel.showWindDown = true
+            }
+        }
+        .onChange(of: viewModel.heartbeat.isFinishVideoGranted) { _, granted in
+            if granted {
+                viewModel.enterFinishVideoMode { onTimesUp() }
             }
         }
         .onChange(of: viewModel.heartbeat.isOutsideSchedule) { _, outside in
@@ -242,11 +267,14 @@ final class PlayerViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var heartbeat = HeartbeatService()
     @Published var scheduleCutoffReached = false
+    @Published var showWindDown = false
+    @Published var finishVideoMode = false
 
     private let apiClient: APIClient
     private var hlsSessionId: String?
     private var positionSaveTask: Task<Void, Never>?
     private var cutoffTask: Task<Void, Never>?
+    private var endObserver: NSObjectProtocol?
     private var videoId: String = ""
     private var childId: Int = 0
 
@@ -315,6 +343,25 @@ final class PlayerViewModel: ObservableObject {
         saveCurrentPosition()
     }
 
+    /// Enter "finish this video" mode — hide overlay, stop heartbeat, play until end.
+    func enterFinishVideoMode(onEnd: @escaping () -> Void) {
+        showWindDown = false
+        finishVideoMode = true
+        heartbeat.stop()
+        player?.play()
+
+        // Observe when the video finishes playing
+        guard let item = player?.currentItem else { return }
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pause()
+            onEnd()
+        }
+    }
+
     func cleanup() {
         // Save position before tearing down
         saveCurrentPosition()
@@ -322,6 +369,10 @@ final class PlayerViewModel: ObservableObject {
         positionSaveTask = nil
         cutoffTask?.cancel()
         cutoffTask = nil
+        if let obs = endObserver {
+            NotificationCenter.default.removeObserver(obs)
+            endObserver = nil
+        }
         player?.pause()
         player = nil
         heartbeat.stop()

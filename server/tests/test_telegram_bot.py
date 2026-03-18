@@ -1975,3 +1975,119 @@ class TestFamilySafeFilter:
 
         await bot.notify_new_request(child, video)
         bot._app.bot.send_message.assert_called_once()
+
+
+# ── Time Expired / Time Request Callbacks ────────────────────────
+
+class TestTimeCallbacks:
+    def _make_callback_update(self, data: str, admin=True):
+        """Create a mock Update with callback_query."""
+        update = MagicMock()
+        chat_id = 12345 if admin else 99999
+        update.effective_chat.id = chat_id
+        update.effective_user.id = chat_id
+        update.callback_query = AsyncMock()
+        update.callback_query.data = data
+        update.callback_query.answer = AsyncMock()
+        update.callback_query.edit_message_caption = AsyncMock()
+        update.callback_query.message = AsyncMock()
+        return update
+
+    @pytest.mark.asyncio
+    async def test_finish_vid_sets_settings(self, bot, store, context):
+        """finish_vid callback sets finish_video_date and finish_video_id."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_video("vid12345678", "Test Video", "Channel")
+
+        update = self._make_callback_update(f"finish_vid:{cid}:vid12345678")
+        await bot._handle_callback(update, context)
+
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+        assert store.get_child_setting(cid, "finish_video_date", "") == today
+        assert store.get_child_setting(cid, "finish_video_id", "") == "vid12345678"
+
+    @pytest.mark.asyncio
+    async def test_grant_time_accumulates_bonus(self, bot, store, context):
+        """grant_time callback accumulates bonus minutes for today."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+
+        # First grant: +15 min
+        update = self._make_callback_update(f"grant_time:{cid}:15")
+        await bot._handle_callback(update, context)
+
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+        assert store.get_child_setting(cid, "bonus_minutes_date", "") == today
+        assert store.get_child_setting(cid, "bonus_minutes", "0") == "15"
+
+        # Second grant: +30 min (should accumulate to 45)
+        update2 = self._make_callback_update(f"grant_time:{cid}:30")
+        await bot._handle_callback(update2, context)
+        assert store.get_child_setting(cid, "bonus_minutes", "0") == "45"
+
+    @pytest.mark.asyncio
+    async def test_grant_time_marks_request_granted(self, bot, store, context):
+        """grant_time sets pending time_request_status to granted."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+
+        store.set_child_setting(cid, "time_request_date", today)
+        store.set_child_setting(cid, "time_request_status", "pending")
+
+        update = self._make_callback_update(f"grant_time:{cid}:15")
+        await bot._handle_callback(update, context)
+
+        assert store.get_child_setting(cid, "time_request_status", "") == "granted"
+
+    @pytest.mark.asyncio
+    async def test_deny_time_sets_denied(self, bot, store, context):
+        """deny_time callback sets time_request_status to denied."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+
+        store.set_child_setting(cid, "time_request_date", today)
+        store.set_child_setting(cid, "time_request_status", "pending")
+
+        update = self._make_callback_update(f"deny_time:{cid}")
+        await bot._handle_callback(update, context)
+
+        assert store.get_child_setting(cid, "time_request_status", "") == "denied"
+
+    @pytest.mark.asyncio
+    async def test_notify_time_expired(self, bot, store):
+        """notify_time_expired sends a message with finish/grant buttons."""
+        child = store.add_child("Alex")
+        video = {"video_id": "vid12345678", "title": "Fun Video", "channel_name": "Ch"}
+
+        bot._app = MagicMock()
+        bot._app.bot = AsyncMock()
+        bot._app.bot.send_message = AsyncMock()
+
+        await bot.notify_time_expired(child, video)
+
+        bot._app.bot.send_message.assert_called_once()
+        call_kwargs = bot._app.bot.send_message.call_args[1]
+        assert "Time's Up" in call_kwargs["text"]
+        assert "Fun Video" in call_kwargs["text"]
+
+    @pytest.mark.asyncio
+    async def test_notify_time_request(self, bot, store):
+        """notify_time_request sends a message with grant/deny buttons."""
+        child = store.add_child("Alex")
+
+        bot._app = MagicMock()
+        bot._app.bot = AsyncMock()
+        bot._app.bot.send_message = AsyncMock()
+
+        await bot.notify_time_request(child, None)
+
+        bot._app.bot.send_message.assert_called_once()
+        call_kwargs = bot._app.bot.send_message.call_args[1]
+        assert "More time requested" in call_kwargs["text"]

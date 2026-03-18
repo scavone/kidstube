@@ -292,6 +292,71 @@ class TelegramBot:
             reply_markup=keyboard,
         )
 
+    # ── Time Expired / Time Request Notifications ──────────────────
+
+    async def notify_time_expired(self, child: dict, video: dict):
+        """Notify parent that a child's time has expired while watching a video."""
+        if not self._app or not self.admin_chat_id:
+            return
+
+        child_id = child["id"]
+        child_name = child.get("name", "Unknown")
+        video_id = video.get("video_id", "")
+        title = video.get("title", "Unknown")
+
+        text = (
+            f"<b>[{_esc(child_name)}] Time's Up!</b>\n\n"
+            f"Watching: <b>{_esc(title)}</b>"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "Let them finish this video",
+                callback_data=f"finish_vid:{child_id}:{video_id}",
+            )],
+            [
+                InlineKeyboardButton("+15 min", callback_data=f"grant_time:{child_id}:15"),
+                InlineKeyboardButton("+30 min", callback_data=f"grant_time:{child_id}:30"),
+            ],
+        ])
+
+        await self._app.bot.send_message(
+            chat_id=self.admin_chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+
+    async def notify_time_request(self, child: dict, video_id: str | None):
+        """Notify parent that a child is requesting more time."""
+        if not self._app or not self.admin_chat_id:
+            return
+
+        child_id = child["id"]
+        child_name = child.get("name", "Unknown")
+
+        text = f"<b>[{_esc(child_name)}] More time requested</b>"
+
+        if video_id:
+            video = self.video_store.get_video(video_id)
+            if video:
+                text += f"\nWatching: <b>{_esc(video['title'])}</b>"
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("+15 min", callback_data=f"grant_time:{child_id}:15"),
+                InlineKeyboardButton("+30 min", callback_data=f"grant_time:{child_id}:30"),
+            ],
+            [InlineKeyboardButton("Deny", callback_data=f"deny_time:{child_id}")],
+        ])
+
+        await self._app.bot.send_message(
+            chat_id=self.admin_chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+
     # ── Callback Handler ───────────────────────────────────────────
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -450,6 +515,66 @@ class TelegramBot:
                     query.message,
                     f"Channel <b>{_esc(ch_name)}</b> blocked for {_esc(child_name)}.",
                 )
+            return
+
+        # Finish video: finish_vid:child_id:video_id
+        if action == "finish_vid" and len(parts) >= 3:
+            child_id = int(parts[1])
+            video_id = ":".join(parts[2:])
+            tz = self.config.watch_limits.timezone if self.config else "America/New_York"
+            today = get_today_str(tz)
+            self.video_store.set_child_setting(child_id, "finish_video_date", today)
+            self.video_store.set_child_setting(child_id, "finish_video_id", video_id)
+            child = self.video_store.get_child(child_id)
+            child_name = child["name"] if child else f"Child#{child_id}"
+            await self._send_or_edit(
+                query.message,
+                f"{_esc(child_name)} can finish their current video.",
+            )
+            return
+
+        # Grant time: grant_time:child_id:minutes
+        if action == "grant_time" and len(parts) >= 3:
+            child_id = int(parts[1])
+            minutes = int(parts[2])
+            tz = self.config.watch_limits.timezone if self.config else "America/New_York"
+            today = get_today_str(tz)
+            # Accumulate bonus minutes for today
+            bonus_date = self.video_store.get_child_setting(child_id, "bonus_minutes_date", "")
+            if bonus_date == today:
+                existing = int(self.video_store.get_child_setting(child_id, "bonus_minutes", "0"))
+            else:
+                existing = 0
+            self.video_store.set_child_setting(child_id, "bonus_minutes_date", today)
+            self.video_store.set_child_setting(child_id, "bonus_minutes", str(existing + minutes))
+            # Mark pending time request as granted if exists
+            req_date = self.video_store.get_child_setting(child_id, "time_request_date", "")
+            req_status = self.video_store.get_child_setting(child_id, "time_request_status", "")
+            if req_date == today and req_status == "pending":
+                self.video_store.set_child_setting(child_id, "time_request_status", "granted")
+            child = self.video_store.get_child(child_id)
+            child_name = child["name"] if child else f"Child#{child_id}"
+            total_bonus = existing + minutes
+            await self._send_or_edit(
+                query.message,
+                f"Granted +{minutes} min to {_esc(child_name)} ({total_bonus} min bonus today).",
+            )
+            return
+
+        # Deny time: deny_time:child_id
+        if action == "deny_time" and len(parts) >= 2:
+            child_id = int(parts[1])
+            tz = self.config.watch_limits.timezone if self.config else "America/New_York"
+            today = get_today_str(tz)
+            req_date = self.video_store.get_child_setting(child_id, "time_request_date", "")
+            if req_date == today:
+                self.video_store.set_child_setting(child_id, "time_request_status", "denied")
+            child = self.video_store.get_child(child_id)
+            child_name = child["name"] if child else f"Child#{child_id}"
+            await self._send_or_edit(
+                query.message,
+                f"Denied extra time for {_esc(child_name)}.",
+            )
             return
 
         # Approval/denial actions: action:child_id:video_id

@@ -504,4 +504,53 @@ struct APIClientTests {
 
         _ = try await noAuthClient.getProfiles()
     }
+
+    // MARK: - Time Requests
+
+    @Test("Request more time — pending")
+    func requestMoreTimePending() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/time-request", json: [
+            "status": "pending", "bonus_minutes": 0
+        ])
+
+        let response = try await client.requestMoreTime(childId: 1, videoId: "abc12345678")
+        #expect(response.status == "pending")
+        #expect(response.bonusMinutes == 0)
+    }
+
+    @Test("Request more time — already granted")
+    func requestMoreTimeGranted() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/time-request", json: [
+            "status": "granted", "bonus_minutes": 15
+        ])
+
+        let response = try await client.requestMoreTime(childId: 1)
+        #expect(response.status == "granted")
+        #expect(response.bonusMinutes == 15)
+    }
+
+    @Test("Get time request status — none")
+    func getTimeRequestStatusNone() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/time-request/status", json: [
+            "status": "none", "bonus_minutes": 0
+        ])
+
+        let response = try await client.getTimeRequestStatus(childId: 1)
+        #expect(response.status == "none")
+    }
+
+    @Test("Get time request status — granted")
+    func getTimeRequestStatusGranted() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/time-request/status", json: [
+            "status": "granted", "bonus_minutes": 30
+        ])
+
+        let response = try await client.getTimeRequestStatus(childId: 1)
+        #expect(response.status == "granted")
+        #expect(response.bonusMinutes == 30)
+    }
 }

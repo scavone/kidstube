@@ -126,10 +126,21 @@ struct ContentView: View {
                     )
 
                 case .timesUp:
-                    TimesUpView(
-                        childName: selectedChild?.name ?? "",
-                        onBack: { screen = .home }
-                    )
+                    if let child = selectedChild {
+                        TimesUpView(
+                            childName: child.name,
+                            childId: child.id,
+                            onBack: { screen = .home },
+                            onTimeGranted: { screen = .home }
+                        )
+                    } else {
+                        TimesUpView(
+                            childName: "",
+                            childId: 0,
+                            onBack: { screen = .home },
+                            onTimeGranted: { screen = .home }
+                        )
+                    }
 
                 case .outsideSchedule:
                     OutsideScheduleView(
@@ -173,7 +184,25 @@ struct ContentView: View {
         pendingVideoId = video.videoId
         pendingVideoTitle = video.title
         guard let child = selectedChild else { return }
-        playerItem = PlayerItem(video: video, child: child)
+        // Pre-playback time check — block if exceeded
+        Task {
+            let apiClient = APIClient()
+            do {
+                let status = try await apiClient.getTimeStatus(childId: child.id)
+                await MainActor.run {
+                    if status.exceeded {
+                        screen = .timesUp
+                    } else {
+                        playerItem = PlayerItem(video: video, child: child)
+                    }
+                }
+            } catch {
+                // Fail-open on network error
+                await MainActor.run {
+                    playerItem = PlayerItem(video: video, child: child)
+                }
+            }
+        }
     }
 
     /// Play a video by ID only (no watch position data — e.g. from search or pending).

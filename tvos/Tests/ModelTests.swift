@@ -608,3 +608,70 @@ struct APIResponseModelTests {
         #expect(body.status == "unwatched")
     }
 }
+
+// MARK: - Time Request Model Tests
+
+@Suite("TimeRequest")
+struct TimeRequestModelTests {
+
+    @Test("Decode TimeRequestResponse")
+    func decodeTimeRequestResponse() throws {
+        let json = """
+        {"status": "pending", "bonus_minutes": 0}
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(TimeRequestResponse.self, from: json)
+        #expect(response.status == "pending")
+        #expect(response.bonusMinutes == 0)
+    }
+
+    @Test("Decode TimeRequestResponse — granted with bonus")
+    func decodeTimeRequestResponseGranted() throws {
+        let json = """
+        {"status": "granted", "bonus_minutes": 15}
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(TimeRequestResponse.self, from: json)
+        #expect(response.status == "granted")
+        #expect(response.bonusMinutes == 15)
+    }
+
+    @Test("Decode TimeRequestStatusResponse")
+    func decodeTimeRequestStatusResponse() throws {
+        let json = """
+        {"status": "none", "bonus_minutes": 0}
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(TimeRequestStatusResponse.self, from: json)
+        #expect(response.status == "none")
+        #expect(response.bonusMinutes == 0)
+    }
+
+    @Test("Decode TimeRequestStatusResponse — granted")
+    func decodeTimeRequestStatusResponseGranted() throws {
+        let json = """
+        {"status": "granted", "bonus_minutes": 30}
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(TimeRequestStatusResponse.self, from: json)
+        #expect(response.status == "granted")
+        #expect(response.bonusMinutes == 30)
+    }
+
+    @Test("Encode TimeRequestBody with video_id")
+    func encodeTimeRequestBody() throws {
+        let body = TimeRequestBody(childId: 1, videoId: "abc12345678")
+        let data = try JSONEncoder().encode(body)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(dict["child_id"] as? Int == 1)
+        #expect(dict["video_id"] as? String == "abc12345678")
+    }
+
+    @Test("Encode TimeRequestBody without video_id")
+    func encodeTimeRequestBodyNoVideo() throws {
+        let body = TimeRequestBody(childId: 2, videoId: nil)
+        let data = try JSONEncoder().encode(body)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(dict["child_id"] as? Int == 2)
+    }
+}

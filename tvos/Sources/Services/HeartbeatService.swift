@@ -7,6 +7,7 @@ final class HeartbeatService: ObservableObject {
     @Published var remainingSeconds: Int = -1
     @Published var isOutsideSchedule: Bool = false
     @Published var isTimeExceeded: Bool = false
+    @Published var isFinishVideoGranted: Bool = false
 
     private let apiClient: APIClient
     private var task: Task<Void, Never>?
@@ -24,6 +25,7 @@ final class HeartbeatService: ObservableObject {
         self.childId = childId
         self.isTimeExceeded = false
         self.isOutsideSchedule = false
+        self.isFinishVideoGranted = false
 
         task = Task { [weak self] in
             guard let self else { return }
@@ -53,6 +55,8 @@ final class HeartbeatService: ObservableObject {
 
             if remaining == -2 {
                 self.isOutsideSchedule = true
+            } else if remaining == -3 {
+                self.isFinishVideoGranted = true
             } else if remaining == 0 {
                 self.isTimeExceeded = true
             }

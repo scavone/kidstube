@@ -118,3 +118,20 @@ class ChannelResponse(BaseModel):
     handle: Optional[str] = None
     status: str
     category: Optional[str] = None
+
+
+# ── Time Request ──────────────────────────────────────────────────
+
+class TimeRequestBody(BaseModel):
+    child_id: int = Field(..., gt=0)
+    video_id: Optional[str] = Field(default=None, max_length=20)
+
+
+class TimeRequestResponse(BaseModel):
+    status: str  # pending, granted, denied, already_pending
+    bonus_minutes: int = 0
+
+
+class TimeRequestStatusResponse(BaseModel):
+    status: str  # none, pending, granted, denied
+    bonus_minutes: int = 0

@@ -230,6 +230,19 @@ final class APIClient: Sendable {
         return try await get("/api/schedule-status", query: ["child_id": String(childId)])
     }
 
+    // MARK: - Time Requests (More Time)
+
+    /// Request more time for a child.
+    func requestMoreTime(childId: Int, videoId: String? = nil) async throws -> TimeRequestResponse {
+        let body = TimeRequestBody(childId: childId, videoId: videoId)
+        return try await post("/api/time-request", body: body)
+    }
+
+    /// Poll the status of a pending time request.
+    func getTimeRequestStatus(childId: Int) async throws -> TimeRequestStatusResponse {
+        return try await get("/api/time-request/status", query: ["child_id": String(childId)])
+    }
+
     // MARK: - Private HTTP Helpers
 
     private func get<T: Decodable>(

@@ -1458,3 +1458,189 @@ class TestChannelRequestEndpoint:
         assert len(results) == 2
         assert results[0]["channel_status"] == "allowed"
         assert results[1].get("channel_status") is None
+
+
+class TestBonusTime:
+    def test_remaining_includes_bonus(self, client, auth_headers, store):
+        """_get_remaining_seconds adds bonus minutes to the limit."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.set_child_setting(cid, "daily_limit_minutes", "30")
+        # Use up 29 minutes of watch time
+        from utils import get_today_str, get_day_utc_bounds
+        tz = "America/New_York"
+        today = get_today_str(tz)
+        store.record_watch_seconds("vid12345678", cid, 29 * 60)
+        # Without bonus, only ~1 min remaining
+        resp = client.get(f"/api/time-status?child_id={cid}", headers=auth_headers)
+        data = resp.json()
+        assert data["remaining_min"] <= 1.0
+
+        # Add 15 min bonus for today
+        store.set_child_setting(cid, "bonus_minutes_date", today)
+        store.set_child_setting(cid, "bonus_minutes", "15")
+
+        resp = client.get(f"/api/time-status?child_id={cid}", headers=auth_headers)
+        data = resp.json()
+        assert data["remaining_min"] > 14.0  # ~16 min remaining now
+        assert data["exceeded"] is False
+
+    def test_bonus_only_applies_for_today(self, client, auth_headers, store):
+        """Bonus from a different date does not apply."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.set_child_setting(cid, "daily_limit_minutes", "10")
+        # Set bonus for yesterday
+        store.set_child_setting(cid, "bonus_minutes_date", "2020-01-01")
+        store.set_child_setting(cid, "bonus_minutes", "30")
+
+        resp = client.get(f"/api/time-status?child_id={cid}", headers=auth_headers)
+        data = resp.json()
+        assert data["limit_min"] == 10  # no bonus added
+        assert data["remaining_min"] == 10.0
+
+    def test_heartbeat_includes_bonus(self, client, auth_headers, store):
+        """Heartbeat remaining calculation includes bonus time."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.set_child_setting(cid, "daily_limit_minutes", "1")
+        vid = "dQw4w9WgXcQ"
+        store.add_video(vid, "Test Video", "Channel")
+        store.request_video(cid, vid)
+        store.update_video_status(cid, vid, "approved")
+
+        # Send heartbeat — should have ~60 seconds remaining
+        resp = client.post(
+            "/api/watch-heartbeat", headers=auth_headers,
+            json={"video_id": vid, "child_id": cid, "seconds": 0},
+        )
+        assert resp.status_code == 200
+        remaining_before = resp.json()["remaining"]
+
+        # Add bonus
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+        store.set_child_setting(cid, "bonus_minutes_date", today)
+        store.set_child_setting(cid, "bonus_minutes", "10")
+
+        resp = client.post(
+            "/api/watch-heartbeat", headers=auth_headers,
+            json={"video_id": vid, "child_id": cid, "seconds": 0},
+        )
+        assert resp.status_code == 200
+        remaining_after = resp.json()["remaining"]
+        assert remaining_after > remaining_before
+
+
+class TestTimeRequestEndpoint:
+    def test_create_time_request(self, client, auth_headers, store):
+        """POST /api/time-request creates a pending request."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+
+        resp = client.post(
+            "/api/time-request", headers=auth_headers,
+            json={"child_id": cid},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "pending"
+        assert data["bonus_minutes"] == 0
+
+    def test_time_request_idempotent(self, client, auth_headers, store):
+        """Duplicate POST returns pending without creating a new request."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+
+        client.post("/api/time-request", headers=auth_headers, json={"child_id": cid})
+        resp = client.post("/api/time-request", headers=auth_headers, json={"child_id": cid})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    def test_time_request_status_none(self, client, auth_headers, store):
+        """GET /api/time-request/status returns none when no request exists."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+
+        resp = client.get(f"/api/time-request/status?child_id={cid}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "none"
+
+    def test_time_request_status_pending(self, client, auth_headers, store):
+        """GET returns pending after POST."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+
+        client.post("/api/time-request", headers=auth_headers, json={"child_id": cid})
+        resp = client.get(f"/api/time-request/status?child_id={cid}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    def test_time_request_granted_status(self, client, auth_headers, store):
+        """GET returns granted + bonus after parent grants time."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+
+        client.post("/api/time-request", headers=auth_headers, json={"child_id": cid})
+        # Simulate parent granting time
+        store.set_child_setting(cid, "time_request_status", "granted")
+        store.set_child_setting(cid, "bonus_minutes_date", today)
+        store.set_child_setting(cid, "bonus_minutes", "15")
+
+        resp = client.get(f"/api/time-request/status?child_id={cid}", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "granted"
+        assert data["bonus_minutes"] == 15
+
+    def test_time_request_returns_granted_if_already_granted(self, client, auth_headers, store):
+        """POST returns granted + bonus if already granted today."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+
+        store.set_child_setting(cid, "time_request_date", today)
+        store.set_child_setting(cid, "time_request_status", "granted")
+        store.set_child_setting(cid, "bonus_minutes_date", today)
+        store.set_child_setting(cid, "bonus_minutes", "30")
+
+        resp = client.post("/api/time-request", headers=auth_headers, json={"child_id": cid})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "granted"
+        assert data["bonus_minutes"] == 30
+
+    def test_time_request_invalid_child(self, client, auth_headers):
+        """POST returns 404 for nonexistent child."""
+        resp = client.post(
+            "/api/time-request", headers=auth_headers,
+            json={"child_id": 999},
+        )
+        assert resp.status_code == 404
+
+    def test_heartbeat_finish_video_sentinel(self, client, auth_headers, store):
+        """Heartbeat returns -3 when time is up but parent granted finish-video."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        vid = "dQw4w9WgXcQ"
+        store.set_child_setting(cid, "daily_limit_minutes", "1")
+        store.add_video(vid, "Test Video", "Channel")
+        store.request_video(cid, vid)
+        store.update_video_status(cid, vid, "approved")
+        # Use up all time
+        store.record_watch_seconds(vid, cid, 120)
+
+        from utils import get_today_str
+        today = get_today_str("America/New_York")
+        store.set_child_setting(cid, "finish_video_date", today)
+        store.set_child_setting(cid, "finish_video_id", vid)
+
+        resp = client.post(
+            "/api/watch-heartbeat", headers=auth_headers,
+            json={"video_id": vid, "child_id": cid, "seconds": 0},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["remaining"] == -3

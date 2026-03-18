@@ -54,7 +54,15 @@ def create_app(cfg=None) -> FastAPI:
     # Wire up API routes with bot notification callbacks
     notify_cb = bot.notify_new_request if bot else None
     notify_channel_cb = bot.notify_channel_request if bot else None
-    api_routes.setup(store, inv_client, cfg, notify_cb=notify_cb, notify_channel_cb=notify_channel_cb)
+    notify_time_expired_cb = bot.notify_time_expired if bot else None
+    notify_time_request_cb = bot.notify_time_request if bot else None
+    api_routes.setup(
+        store, inv_client, cfg,
+        notify_cb=notify_cb,
+        notify_channel_cb=notify_channel_cb,
+        notify_time_expired_cb=notify_time_expired_cb,
+        notify_time_request_cb=notify_time_request_cb,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

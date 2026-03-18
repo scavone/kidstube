@@ -38,6 +38,9 @@ from api.models import (
     TimeStatusResponse,
     ScheduleStatusResponse,
     ChannelRequestResponse,
+    TimeRequestBody,
+    TimeRequestResponse,
+    TimeRequestStatusResponse,
 )
 from utils import (
     get_today_str,
@@ -62,6 +65,8 @@ video_store = None
 invidious_client = None
 notify_callback = None
 notify_channel_callback = None
+notify_time_expired_callback = None
+notify_time_request_callback = None
 config = None
 
 # Heartbeat dedup: (child_id, video_id) -> monotonic timestamp
@@ -74,6 +79,10 @@ _heartbeat_last_cleanup: float = 0.0
 _last_notification: dict[tuple[int, str], float] = {}
 _last_channel_notification: dict[tuple[int, str], float] = {}
 _NOTIFICATION_MIN_INTERVAL = 60  # seconds
+
+# Time-expired notification dedup: child_id -> monotonic timestamp
+_last_time_expired_notification: dict[int, float] = {}
+_TIME_EXPIRED_NOTIFICATION_INTERVAL = 300  # 5 minutes
 
 # Server-side ffmpeg HLS muxing for HQ adaptive streams
 _FFMPEG_PATH = shutil.which("ffmpeg")
@@ -94,14 +103,18 @@ _HLS_SESSION_MAX_AGE = 7200  # 2 hours
 _HLS_SEGMENT_SECONDS = 2  # Short segments for faster initial playback
 
 
-def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None):
+def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None,
+          notify_time_expired_cb=None, notify_time_request_cb=None):
     """Called by main.py to inject dependencies."""
     global video_store, invidious_client, config, notify_callback, notify_channel_callback
+    global notify_time_expired_callback, notify_time_request_callback
     video_store = store
     invidious_client = inv_client
     config = cfg
     notify_callback = notify_cb
     notify_channel_callback = notify_channel_cb
+    notify_time_expired_callback = notify_time_expired_cb
+    notify_time_request_callback = notify_time_request_cb
 
 
 # ── Profiles ────────────────────────────────────────────────────────
@@ -843,6 +856,27 @@ async def watch_heartbeat(request: Request, body: HeartbeatBody):
 
     # Calculate remaining time
     remaining = _get_remaining_seconds(body.child_id)
+
+    # If time is up, check if parent granted "finish this video"
+    if remaining == 0:
+        tz = config.watch_limits.timezone
+        today = get_today_str(tz)
+        finish_date = video_store.get_child_setting(body.child_id, "finish_video_date", "")
+        finish_vid = video_store.get_child_setting(body.child_id, "finish_video_id", "")
+        if finish_date == today and finish_vid == body.video_id:
+            return HeartbeatResponse(remaining=-3)  # -3 = finish this video
+
+        # Notify parent that time has expired (deduped, 5-min window)
+        if notify_time_expired_callback:
+            notif_now = time.monotonic()
+            last_expired = _last_time_expired_notification.get(body.child_id, 0.0)
+            if notif_now - last_expired >= _TIME_EXPIRED_NOTIFICATION_INTERVAL:
+                _last_time_expired_notification[body.child_id] = notif_now
+                child_data = video_store.get_child(body.child_id)
+                video_data = video_store.get_video(body.video_id)
+                if child_data and video_data:
+                    await notify_time_expired_callback(child_data, video_data)
+
     return HeartbeatResponse(remaining=remaining)
 
 
@@ -938,6 +972,12 @@ async def time_status(child_id: int = Query(..., gt=0)):
     free_day = video_store.get_child_setting(child_id, "free_day_date", "")
     is_free_day = free_day == today
 
+    # Add bonus minutes if granted today
+    bonus_date = video_store.get_child_setting(child_id, "bonus_minutes_date", "")
+    if bonus_date == today:
+        bonus_str = video_store.get_child_setting(child_id, "bonus_minutes", "0")
+        limit_min += int(bonus_str)
+
     if is_free_day:
         remaining_min = float(limit_min)  # show full limit as remaining
     else:
@@ -979,6 +1019,61 @@ async def schedule_status(child_id: int = Query(..., gt=0)):
         end=format_time_12h(end) if end else "midnight",
         minutes_remaining=mins_remaining,
     )
+
+
+# ── Time Requests (More Time) ─────────────────────────────────────
+
+@router.post("/time-request")
+async def create_time_request(body: TimeRequestBody):
+    child = video_store.get_child(body.child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    tz = config.watch_limits.timezone
+    today = get_today_str(tz)
+
+    # Check if already pending/granted today
+    req_date = video_store.get_child_setting(body.child_id, "time_request_date", "")
+    req_status = video_store.get_child_setting(body.child_id, "time_request_status", "")
+
+    if req_date == today and req_status == "granted":
+        bonus_str = video_store.get_child_setting(body.child_id, "bonus_minutes", "0")
+        return TimeRequestResponse(status="granted", bonus_minutes=int(bonus_str))
+
+    if req_date == today and req_status == "pending":
+        return TimeRequestResponse(status="pending")
+
+    # Create new pending request
+    video_store.set_child_setting(body.child_id, "time_request_date", today)
+    video_store.set_child_setting(body.child_id, "time_request_status", "pending")
+
+    # Notify parent
+    if notify_time_request_callback:
+        await notify_time_request_callback(child, body.video_id)
+
+    return TimeRequestResponse(status="pending")
+
+
+@router.get("/time-request/status")
+async def get_time_request_status(child_id: int = Query(..., gt=0)):
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    tz = config.watch_limits.timezone
+    today = get_today_str(tz)
+
+    req_date = video_store.get_child_setting(child_id, "time_request_date", "")
+    if req_date != today:
+        return TimeRequestStatusResponse(status="none")
+
+    req_status = video_store.get_child_setting(child_id, "time_request_status", "")
+    bonus = 0
+    if req_status == "granted":
+        bonus_str = video_store.get_child_setting(child_id, "bonus_minutes", "0")
+        bonus = int(bonus_str)
+
+    return TimeRequestStatusResponse(status=req_status or "none", bonus_minutes=bonus)
 
 
 # ── HLS Session Management ─────────────────────────────────────────
@@ -1200,6 +1295,12 @@ def _get_remaining_seconds(child_id: int) -> int:
 
     if limit_min == 0:
         return -1
+
+    # Add bonus minutes if granted today
+    bonus_date = video_store.get_child_setting(child_id, "bonus_minutes_date", "")
+    if bonus_date == today:
+        bonus_str = video_store.get_child_setting(child_id, "bonus_minutes", "0")
+        limit_min += int(bonus_str)
 
     bounds = get_day_utc_bounds(today, tz)
     used_min = video_store.get_daily_watch_minutes(child_id, today, utc_bounds=bounds)

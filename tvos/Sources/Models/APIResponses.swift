@@ -196,6 +196,38 @@ struct HeartbeatResponse: Codable {
     let remaining: Int
 }
 
+// MARK: - Time Request
+
+struct TimeRequestBody: Codable {
+    let childId: Int
+    let videoId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case childId = "child_id"
+        case videoId = "video_id"
+    }
+}
+
+struct TimeRequestResponse: Codable {
+    let status: String
+    let bonusMinutes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case bonusMinutes = "bonus_minutes"
+    }
+}
+
+struct TimeRequestStatusResponse: Codable {
+    let status: String
+    let bonusMinutes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case bonusMinutes = "bonus_minutes"
+    }
+}
+
 // MARK: - Error
 
 struct APIErrorResponse: Codable {
