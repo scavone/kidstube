@@ -307,6 +307,7 @@ async def get_video_detail(
     video["watch_position"] = pos["watch_position"] if pos else 0
     video["watch_duration"] = pos["watch_duration"] if pos else 0
     video["last_watched_at"] = pos["last_watched_at"] if pos else None
+    video["watch_status"] = pos.get("watch_status") if pos else None
 
     return video
 
@@ -845,12 +846,22 @@ async def save_watch_position(body: WatchPositionBody):
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
 
-    if not video_store.save_watch_position(
-        body.child_id, body.video_id, body.position, body.duration
-    ):
+    threshold = int(video_store.get_child_setting(
+        body.child_id, "auto_complete_threshold", "30"
+    ))
+    watch_status = video_store.save_watch_position(
+        body.child_id, body.video_id, body.position, body.duration,
+        auto_complete_threshold=threshold,
+    )
+    if watch_status is None:
         raise HTTPException(status_code=404, detail="No access record for this video")
 
-    return {"status": "saved", "video_id": body.video_id, "child_id": body.child_id}
+    return {
+        "status": "saved",
+        "video_id": body.video_id,
+        "child_id": body.child_id,
+        "watch_status": watch_status,
+    }
 
 
 @router.get("/watch/position/{video_id}")

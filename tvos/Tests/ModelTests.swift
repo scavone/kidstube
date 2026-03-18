@@ -156,6 +156,58 @@ struct VideoModelTests {
         #expect(video.duration == nil)
         #expect(video.category == nil)
     }
+
+    @Test("watchProgress nil when unwatched")
+    func watchProgressNilWhenUnwatched() {
+        let video = Video(videoId: "test", title: "Test", channelName: "Ch")
+        #expect(video.watchProgress == nil)
+    }
+
+    @Test("watchProgress fraction")
+    func watchProgressFraction() {
+        var video = Video(videoId: "test", title: "Test", channelName: "Ch")
+        video.watchPosition = 120
+        video.watchDuration = 600
+        #expect(video.watchProgress! == 0.2)
+    }
+
+    @Test("watchProgress is 1.0 when watched")
+    func watchProgressWatched() {
+        var video = Video(videoId: "test", title: "Test", channelName: "Ch")
+        video.watchStatus = "watched"
+        #expect(video.watchProgress == 1.0)
+    }
+
+    @Test("isWatched by status")
+    func isWatchedByStatus() {
+        var video = Video(videoId: "test", title: "Test", channelName: "Ch")
+        video.watchStatus = "watched"
+        #expect(video.isWatched)
+    }
+
+    @Test("isWatched by position fallback")
+    func isWatchedByPositionFallback() {
+        var video = Video(videoId: "test", title: "Test", channelName: "Ch")
+        video.watchPosition = 597
+        video.watchDuration = 600
+        #expect(video.isWatched)
+    }
+
+    @Test("Decode video with watch_status")
+    func decodeVideoWithWatchStatus() throws {
+        let json = """
+        {
+            "video_id": "test123", "title": "Watched",
+            "channel_name": "Ch", "watch_status": "watched",
+            "watch_position": 0, "watch_duration": 600
+        }
+        """.data(using: .utf8)!
+
+        let video = try JSONDecoder().decode(Video.self, from: json)
+        #expect(video.watchStatus == "watched")
+        #expect(video.isWatched)
+        #expect(video.watchProgress == 1.0)
+    }
 }
 
 // MARK: - SearchResult Tests

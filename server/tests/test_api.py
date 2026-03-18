@@ -1085,6 +1085,23 @@ class TestWatchPositionEndpoint:
         })
         assert resp.status_code == 200
         assert resp.json()["status"] == "saved"
+        assert resp.json()["watch_status"] == "in_progress"
+
+    def test_save_position_auto_complete(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+
+        resp = client.post("/api/watch/position", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": child["id"],
+            "position": 590,
+            "duration": 600,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "saved"
+        assert data["watch_status"] == "watched"
 
     def test_save_position_invalid_video_id(self, client, auth_headers, store):
         store.add_child("Alex")
@@ -1166,6 +1183,7 @@ class TestWatchPositionEndpoint:
         assert len(videos) == 1
         assert videos[0]["watch_position"] == 120
         assert videos[0]["watch_duration"] == 600
+        assert videos[0]["watch_status"] == "in_progress"
 
     def test_video_detail_includes_watch_position(self, client, auth_headers, store, mock_invidious):
         child = store.add_child("Alex")

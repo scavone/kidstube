@@ -23,6 +23,7 @@ struct Video: Codable, Identifiable, Equatable {
     var watchPosition: Int?
     var watchDuration: Int?
     var lastWatchedAt: String?
+    var watchStatus: String?
 
     var id: String { videoId }
 
@@ -52,6 +53,7 @@ struct Video: Codable, Identifiable, Equatable {
         case watchPosition = "watch_position"
         case watchDuration = "watch_duration"
         case lastWatchedAt = "last_watched_at"
+        case watchStatus = "watch_status"
     }
 
     /// Whether this video has a saved position worth resuming from (at least 5 seconds in).
@@ -59,6 +61,21 @@ struct Video: Codable, Identifiable, Equatable {
         guard let pos = watchPosition, let dur = watchDuration, pos >= 5, dur > 0 else { return false }
         // Don't offer resume if within last 5 seconds (effectively finished)
         return pos < dur - 5
+    }
+
+    /// Whether this video has been fully watched.
+    var isWatched: Bool {
+        if watchStatus == "watched" { return true }
+        // Fallback for data without explicit watch_status
+        guard let pos = watchPosition, let dur = watchDuration, dur > 0, pos > 0 else { return false }
+        return pos >= dur - 5
+    }
+
+    /// Progress fraction (0.0–1.0) for the progress bar, or nil if unwatched.
+    var watchProgress: Double? {
+        if isWatched { return 1.0 }
+        guard let pos = watchPosition, let dur = watchDuration, pos > 0, dur > 0 else { return nil }
+        return min(Double(pos) / Double(dur), 1.0)
     }
 
     /// Formatted resume position string (e.g. "3:45").

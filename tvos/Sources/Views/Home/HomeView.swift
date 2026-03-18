@@ -210,7 +210,9 @@ struct HomeView: View {
                                         channelName: video.channelName,
                                         thumbnailUrl: video.thumbnailUrl,
                                         duration: video.formattedDuration,
-                                        tracksFocus: true
+                                        tracksFocus: true,
+                                        progress: video.watchProgress,
+                                        isWatched: video.isWatched
                                     )
                                     .onLongPressGesture(minimumDuration: 0.5) {
                                         infoItem = VideoInfoItem(id: video.videoId, childId: child.id)

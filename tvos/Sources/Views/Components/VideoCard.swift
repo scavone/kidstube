@@ -11,6 +11,8 @@ struct VideoCard: View {
     /// When true, the card tracks focus itself (for standalone use).
     /// Set to false when the card is inside a Button to avoid stealing focus.
     let tracksFocus: Bool
+    let progress: Double?
+    let isWatched: Bool
 
     init(
         title: String,
@@ -18,7 +20,9 @@ struct VideoCard: View {
         thumbnailUrl: String?,
         duration: String,
         badge: String? = nil,
-        tracksFocus: Bool = true
+        tracksFocus: Bool = true,
+        progress: Double? = nil,
+        isWatched: Bool = false
     ) {
         self.title = title
         self.channelName = channelName
@@ -26,6 +30,8 @@ struct VideoCard: View {
         self.duration = duration
         self.badge = badge
         self.tracksFocus = tracksFocus
+        self.progress = progress
+        self.isWatched = isWatched
     }
 
     var body: some View {
@@ -35,7 +41,38 @@ struct VideoCard: View {
                 thumbnailImage
                     .frame(height: 180)
                     .clipped()
-                    .cornerRadius(8)
+                    .opacity(isWatched ? 0.7 : 1.0)
+
+                // Progress bar at bottom
+                if let progress, progress > 0 {
+                    VStack {
+                        Spacer()
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Rectangle().fill(Color.gray.opacity(0.3)).frame(height: 3)
+                                Rectangle()
+                                    .fill(isWatched ? Color.green : Color.accentColor)
+                                    .frame(width: geo.size.width * progress, height: 3)
+                            }
+                        }
+                        .frame(height: 3)
+                    }
+                }
+
+                // Watched checkmark badge
+                if isWatched {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .shadow(radius: 2)
+                                .padding(6)
+                        }
+                        Spacer()
+                    }
+                }
 
                 if !duration.isEmpty {
                     Text(duration)
@@ -62,6 +99,7 @@ struct VideoCard: View {
                     }
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
             // Title
             Text(title)

@@ -67,6 +67,7 @@ class VideoStore:
                 watch_position INTEGER DEFAULT 0,
                 watch_duration INTEGER DEFAULT 0,
                 last_watched_at TEXT,
+                watch_status TEXT,
                 PRIMARY KEY (child_id, video_id),
                 FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
             );
@@ -187,6 +188,23 @@ class VideoStore:
             self.conn.execute(
                 "ALTER TABLE child_video_access ADD COLUMN last_watched_at TEXT"
             )
+            self.conn.commit()
+
+        if "watch_status" not in cva_columns:
+            self.conn.execute(
+                "ALTER TABLE child_video_access ADD COLUMN watch_status TEXT"
+            )
+            # Backfill from existing position data
+            self.conn.execute("""
+                UPDATE child_video_access SET watch_status = 'in_progress'
+                WHERE watch_status IS NULL AND watch_position > 0
+                  AND watch_duration > 0 AND watch_position < watch_duration - 30
+            """)
+            self.conn.execute("""
+                UPDATE child_video_access SET watch_status = 'watched'
+                WHERE watch_status IS NULL AND watch_position > 0
+                  AND watch_duration > 0 AND watch_position >= watch_duration - 30
+            """)
             self.conn.commit()
 
         # Migrate global channels -> per-child channels for existing databases.
@@ -650,7 +668,8 @@ class VideoStore:
             cursor = self.conn.execute(
                 f"""SELECT v.*, COALESCE(v.category, ch.category, 'fun') as effective_category,
                            cva.decided_at as access_decided_at,
-                           cva.watch_position, cva.watch_duration, cva.last_watched_at
+                           cva.watch_position, cva.watch_duration, cva.last_watched_at,
+                           cva.watch_status
                     FROM child_video_access cva
                     JOIN videos v ON cva.video_id = v.video_id
                     LEFT JOIN child_channels ch
@@ -666,31 +685,67 @@ class VideoStore:
     # ── Watch Position (Resume Playback) ─────────────────────────────
 
     def save_watch_position(self, child_id: int, video_id: str,
-                            position: int, duration: int) -> bool:
+                            position: int, duration: int,
+                            auto_complete_threshold: int = 30) -> Optional[str]:
         """Save playback position for a child+video pair.
 
-        Returns True if a matching access row existed and was updated.
+        Returns the watch_status after save ('in_progress', 'watched'),
+        or None if no access row exists.
+
+        Auto-completes (marks as 'watched') when position is within
+        auto_complete_threshold seconds of the end.
         """
         with self._lock:
-            cursor = self.conn.execute(
-                """UPDATE child_video_access
-                   SET watch_position = ?, watch_duration = ?,
-                       last_watched_at = datetime('now')
-                   WHERE child_id = ? AND video_id = ?""",
-                (position, duration, child_id, video_id),
-            )
-            self.conn.commit()
-            return cursor.rowcount > 0
+            # Auto-complete: near the end of the video
+            if duration > 0 and position > 0 and (duration - position) <= auto_complete_threshold:
+                cursor = self.conn.execute(
+                    """UPDATE child_video_access
+                       SET watch_position = 0, watch_duration = ?,
+                           last_watched_at = datetime('now'),
+                           watch_status = 'watched'
+                       WHERE child_id = ? AND video_id = ?""",
+                    (duration, child_id, video_id),
+                )
+                self.conn.commit()
+                return "watched" if cursor.rowcount > 0 else None
+            elif position > 0:
+                cursor = self.conn.execute(
+                    """UPDATE child_video_access
+                       SET watch_position = ?, watch_duration = ?,
+                           last_watched_at = datetime('now'),
+                           watch_status = 'in_progress'
+                       WHERE child_id = ? AND video_id = ?""",
+                    (position, duration, child_id, video_id),
+                )
+                self.conn.commit()
+                return "in_progress" if cursor.rowcount > 0 else None
+            else:
+                cursor = self.conn.execute(
+                    """UPDATE child_video_access
+                       SET watch_position = ?, watch_duration = ?,
+                           last_watched_at = datetime('now')
+                       WHERE child_id = ? AND video_id = ?""",
+                    (position, duration, child_id, video_id),
+                )
+                self.conn.commit()
+                if cursor.rowcount == 0:
+                    return None
+                # Return existing status
+                row = self.conn.execute(
+                    "SELECT watch_status FROM child_video_access WHERE child_id = ? AND video_id = ?",
+                    (child_id, video_id),
+                ).fetchone()
+                return row[0] if row else None
 
     def get_watch_position(self, child_id: int, video_id: str) -> Optional[dict]:
         """Get saved playback position for a child+video pair.
 
-        Returns dict with watch_position, watch_duration, last_watched_at
-        or None if no access row exists.
+        Returns dict with watch_position, watch_duration, last_watched_at,
+        watch_status or None if no access row exists.
         """
         with self._lock:
             row = self.conn.execute(
-                """SELECT watch_position, watch_duration, last_watched_at
+                """SELECT watch_position, watch_duration, last_watched_at, watch_status
                    FROM child_video_access
                    WHERE child_id = ? AND video_id = ?""",
                 (child_id, video_id),
@@ -701,7 +756,33 @@ class VideoStore:
                 "watch_position": row[0] or 0,
                 "watch_duration": row[1] or 0,
                 "last_watched_at": row[2],
+                "watch_status": row[3],
             }
+
+    def set_watch_status(self, child_id: int, video_id: str, status: str) -> bool:
+        """Manually set watch_status for a child+video pair.
+
+        If marking as unwatched (status is None or empty), clears position data.
+        Returns True if a matching access row existed and was updated.
+        """
+        with self._lock:
+            if not status:
+                cursor = self.conn.execute(
+                    """UPDATE child_video_access
+                       SET watch_status = NULL, watch_position = 0,
+                           watch_duration = 0, last_watched_at = NULL
+                       WHERE child_id = ? AND video_id = ?""",
+                    (child_id, video_id),
+                )
+            else:
+                cursor = self.conn.execute(
+                    """UPDATE child_video_access
+                       SET watch_status = ?
+                       WHERE child_id = ? AND video_id = ?""",
+                    (status, child_id, video_id),
+                )
+            self.conn.commit()
+            return cursor.rowcount > 0
 
     def clear_watch_position(self, child_id: int, video_id: str) -> bool:
         """Clear saved playback position (e.g. when video is finished)."""

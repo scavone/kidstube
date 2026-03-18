@@ -612,7 +612,8 @@ class TestWatchPosition:
         store.add_video("vid1", "Title", "Channel")
         store.request_video(child["id"], "vid1")
 
-        assert store.save_watch_position(child["id"], "vid1", 120, 600)
+        result = store.save_watch_position(child["id"], "vid1", 120, 600)
+        assert result == "in_progress"
         pos = store.get_watch_position(child["id"], "vid1")
         assert pos is not None
         assert pos["watch_position"] == 120
@@ -633,7 +634,7 @@ class TestWatchPosition:
         child = store.add_child("Alex")
         # No video access row exists
         result = store.save_watch_position(child["id"], "vid1", 120, 600)
-        assert result is False
+        assert result is None
 
     def test_get_position_no_access_row(self, store):
         child = store.add_child("Alex")
@@ -743,3 +744,80 @@ class TestChannelRequests:
         store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
         store.remove_child(child["id"])
         assert store.get_channel_request_status(child["id"], "UCabcdef12345678901234AB") is None
+
+
+class TestAutoComplete:
+    def test_auto_complete_triggers(self, store):
+        """Position near end (within threshold) marks as watched, clears position."""
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+
+        result = store.save_watch_position(child["id"], "vid1", 580, 600, auto_complete_threshold=30)
+        assert result == "watched"
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos["watch_position"] == 0
+        assert pos["watch_status"] == "watched"
+
+    def test_auto_complete_does_not_trigger(self, store):
+        """Position far from end stays in_progress."""
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+
+        result = store.save_watch_position(child["id"], "vid1", 550, 600, auto_complete_threshold=30)
+        assert result == "in_progress"
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos["watch_position"] == 550
+        assert pos["watch_status"] == "in_progress"
+
+    def test_auto_complete_threshold_boundary(self, store):
+        """Position exactly at duration-threshold triggers auto-complete."""
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+
+        result = store.save_watch_position(child["id"], "vid1", 570, 600, auto_complete_threshold=30)
+        assert result == "watched"
+
+    def test_auto_complete_preserves_duration(self, store):
+        """After auto-complete, watch_duration is still set for client reference."""
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+
+        store.save_watch_position(child["id"], "vid1", 590, 600)
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos["watch_duration"] == 600
+        assert pos["watch_status"] == "watched"
+
+    def test_watch_status_in_approved_videos(self, store):
+        """get_approved_videos includes watch_status."""
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+        store.update_video_status(child["id"], "vid1", "approved")
+        store.save_watch_position(child["id"], "vid1", 120, 600)
+
+        videos, total = store.get_approved_videos(child["id"])
+        assert total == 1
+        assert videos[0]["watch_status"] == "in_progress"
+
+    def test_set_watch_status(self, store):
+        """Manual set/clear of watch_status."""
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Title", "Channel")
+        store.request_video(child["id"], "vid1")
+        store.save_watch_position(child["id"], "vid1", 120, 600)
+
+        # Mark as watched manually
+        assert store.set_watch_status(child["id"], "vid1", "watched")
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos["watch_status"] == "watched"
+
+        # Clear (mark as unwatched)
+        assert store.set_watch_status(child["id"], "vid1", "")
+        pos = store.get_watch_position(child["id"], "vid1")
+        assert pos["watch_status"] is None
+        assert pos["watch_position"] == 0
+        assert pos["watch_duration"] == 0
