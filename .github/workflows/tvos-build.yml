@@ -56,24 +56,25 @@ jobs:
       - name: Generate Xcode project
         run: cd tvos && xcodegen generate
 
-      - name: Build Archive
+      - name: Build
         run: |
-          xcodebuild archive \
+          xcodebuild \
             -project tvos/KidsTube.xcodeproj \
             -scheme KidsTube \
             -destination "generic/platform=tvOS" \
-            -archivePath build/KidsTube.xcarchive \
+            -configuration Release \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=NO
+            ONLY_ACTIVE_ARCH=NO \
+            build \
+            CONFIGURATION_BUILD_DIR=$PWD/build
 
       - name: Package IPA
         run: |
-          cd build/KidsTube.xcarchive/Products/Applications
-          mkdir Payload
-          mv *.app Payload/
-          zip -r ../../../../KidsTube.ipa Payload
+          mkdir -p build/Payload
+          mv build/KidsTube.app build/Payload/
+          cd build && zip -r KidsTube.ipa Payload
 
       - name: Upload Artifact
         if: github.event_name != 'pull_request'
