@@ -191,6 +191,20 @@ final class APIClient: Sendable {
         return try await get("/api/watch/position/\(videoId)", query: ["child_id": String(childId)])
     }
 
+    // MARK: - Watch Status (Manual Toggle)
+
+    /// Manually mark a video as watched or unwatched.
+    /// Best-effort — UI updates optimistically before this call.
+    func setWatchStatus(videoId: String, childId: Int, status: String) async {
+        let body = WatchStatusBody(videoId: videoId, childId: childId, status: status)
+        do {
+            struct Response: Codable { let status: String }
+            let _: Response = try await post("/api/watch/status", body: body)
+        } catch {
+            // Best-effort — UI already updated optimistically
+        }
+    }
+
     // MARK: - Watch Tracking
 
     /// Send a heartbeat reporting seconds watched. Returns remaining seconds.

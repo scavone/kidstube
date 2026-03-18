@@ -27,6 +27,7 @@ from api.models import (
     VideoRequestBody,
     HeartbeatBody,
     WatchPositionBody,
+    WatchStatusBody,
     CreateChildBody,
     UpdateChildBody,
     ImportStarterChannelsBody,
@@ -881,6 +882,29 @@ async def get_watch_position(
         return {"watch_position": 0, "watch_duration": 0, "last_watched_at": None}
 
     return pos
+
+
+# ── Watch Status (Manual Toggle) ───────────────────────────────────
+
+@router.post("/watch/status")
+async def set_watch_status(body: WatchStatusBody):
+    if not VIDEO_ID_RE.match(body.video_id):
+        raise HTTPException(status_code=400, detail="Invalid video ID format")
+
+    child = video_store.get_child(body.child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    db_status = body.status if body.status == "watched" else ""
+    if not video_store.set_watch_status(body.child_id, body.video_id, db_status):
+        raise HTTPException(status_code=404, detail="No access record for this video")
+
+    return {
+        "status": "updated",
+        "video_id": body.video_id,
+        "child_id": body.child_id,
+        "watch_status": body.status if body.status == "watched" else None,
+    }
 
 
 # ── Time Status ─────────────────────────────────────────────────────

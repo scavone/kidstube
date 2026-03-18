@@ -115,8 +115,12 @@ struct SearchResultsView: View {
                 duration: result.formattedDuration,
                 badge: statusBadge(result)
             )
-            .onLongPressGesture(minimumDuration: 0.5) {
-                infoItem = VideoInfoItem(id: result.videoId, childId: child.id)
+            .contextMenu {
+                Button {
+                    infoItem = VideoInfoItem(id: result.videoId, childId: child.id)
+                } label: {
+                    Label("Video Info", systemImage: "info.circle")
+                }
             }
 
             actionButton(result)

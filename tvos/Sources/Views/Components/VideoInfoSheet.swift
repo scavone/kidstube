@@ -7,10 +7,11 @@ struct VideoInfoItem: Identifiable {
 }
 
 /// A sheet that shows full video metadata including description.
-/// Presented on long-press of a video card.
+/// Presented from a context menu on a video card.
 struct VideoInfoSheet: View {
     let videoId: String
     let childId: Int
+    var onWatchStatusChanged: ((String, String) -> Void)?
 
     @StateObject private var viewModel = VideoInfoSheetViewModel()
     @Environment(\.dismiss) private var dismiss
@@ -57,6 +58,23 @@ struct VideoInfoSheet: View {
                                     .font(.body)
                                     .foregroundColor(.secondary)
                                     .italic()
+                            }
+
+                            // Watch status toggle
+                            if onWatchStatusChanged != nil {
+                                Divider()
+                                Button {
+                                    viewModel.toggleWatchStatus(childId: childId)
+                                    let newStatus = video.isWatched ? "unwatched" : "watched"
+                                    onWatchStatusChanged?(video.videoId, newStatus)
+                                } label: {
+                                    if video.isWatched {
+                                        Label("Mark as Unwatched", systemImage: "arrow.counterclockwise")
+                                    } else {
+                                        Label("Mark as Watched", systemImage: "checkmark.circle")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
                             }
                         }
                         .padding(40)
@@ -146,5 +164,21 @@ final class VideoInfoSheetViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func toggleWatchStatus(childId: Int) {
+        guard var video = video else { return }
+        let newStatus = video.isWatched ? "unwatched" : "watched"
+        if newStatus == "watched" {
+            video.watchStatus = "watched"
+        } else {
+            video.watchStatus = nil
+            video.watchPosition = nil
+            video.watchDuration = nil
+        }
+        self.video = video
+        Task {
+            await apiClient.setWatchStatus(videoId: video.videoId, childId: childId, status: newStatus)
+        }
     }
 }

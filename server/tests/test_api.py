@@ -1211,6 +1211,78 @@ class TestWatchPositionEndpoint:
         assert resp.status_code == 401
 
 
+class TestWatchStatusEndpoint:
+    def test_mark_watched(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+
+        resp = client.post("/api/watch/status", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": child["id"],
+            "status": "watched",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["watch_status"] == "watched"
+
+    def test_mark_unwatched(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("abc12345678", "Title", "Channel")
+        store.request_video(child["id"], "abc12345678")
+        store.save_watch_position(child["id"], "abc12345678", 590, 600)
+
+        resp = client.post("/api/watch/status", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": child["id"],
+            "status": "unwatched",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["watch_status"] is None
+
+        # Verify position was cleared
+        pos = store.get_watch_position(child["id"], "abc12345678")
+        assert pos["watch_position"] == 0
+
+    def test_invalid_status(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.post("/api/watch/status", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": 1,
+            "status": "foo",
+        })
+        assert resp.status_code == 422
+
+    def test_invalid_video_id(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.post("/api/watch/status", headers=auth_headers, json={
+            "video_id": "bad",
+            "child_id": 1,
+            "status": "watched",
+        })
+        assert resp.status_code == 400
+
+    def test_child_not_found(self, client, auth_headers):
+        resp = client.post("/api/watch/status", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": 999,
+            "status": "watched",
+        })
+        assert resp.status_code == 404
+
+    def test_no_access_record(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        resp = client.post("/api/watch/status", headers=auth_headers, json={
+            "video_id": "abc12345678",
+            "child_id": child["id"],
+            "status": "watched",
+        })
+        assert resp.status_code == 404
+
+
 class TestChannelRequestEndpoint:
     def test_request_channel_pending(self, client, auth_headers, store):
         store.add_child("Alex")

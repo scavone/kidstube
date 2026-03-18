@@ -568,4 +568,23 @@ struct APIResponseModelTests {
         let response = try JSONDecoder().decode(ChannelRequestStatusResponse.self, from: json)
         #expect(response.status == "approved")
     }
+
+    @Test("Encode watch status body uses snake_case keys")
+    func encodeWatchStatusBody() throws {
+        let body = WatchStatusBody(videoId: "abc12345678", childId: 1, status: "watched")
+        let data = try JSONEncoder().encode(body)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(dict["video_id"] as? String == "abc12345678")
+        #expect(dict["child_id"] as? Int == 1)
+        #expect(dict["status"] as? String == "watched")
+    }
+
+    @Test("Decode watch status body round-trip")
+    func decodeWatchStatusBody() throws {
+        let json = "{\"video_id\":\"abc12345678\",\"child_id\":2,\"status\":\"unwatched\"}".data(using: .utf8)!
+        let body = try JSONDecoder().decode(WatchStatusBody.self, from: json)
+        #expect(body.videoId == "abc12345678")
+        #expect(body.childId == 2)
+        #expect(body.status == "unwatched")
+    }
 }

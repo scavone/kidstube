@@ -34,6 +34,12 @@ class WatchPositionBody(BaseModel):
     duration: int = Field(..., ge=0)
 
 
+class WatchStatusBody(BaseModel):
+    video_id: str = Field(..., min_length=1, max_length=20)
+    child_id: int = Field(..., gt=0)
+    status: str = Field(..., pattern=r"^(watched|unwatched)$")
+
+
 class ImportStarterChannelsBody(BaseModel):
     handles: list[str] = Field(..., min_length=1)
     child_id: int = Field(..., gt=0)

@@ -432,6 +432,38 @@ struct APIClientTests {
         #expect(status == "pending")
     }
 
+    // MARK: - Watch Status
+
+    @Test("Set watch status — watched")
+    func setWatchStatusWatched() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/watch/status", json: [
+            "status": "updated", "video_id": "abc12345678", "child_id": 1, "watch_status": "watched"
+        ])
+
+        // Best-effort — just verify no crash
+        await client.setWatchStatus(videoId: "abc12345678", childId: 1, status: "watched")
+    }
+
+    @Test("Set watch status — unwatched")
+    func setWatchStatusUnwatched() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/watch/status", json: [
+            "status": "updated", "video_id": "abc12345678", "child_id": 1, "watch_status": NSNull()
+        ])
+
+        await client.setWatchStatus(videoId: "abc12345678", childId: 1, status: "unwatched")
+    }
+
+    @Test("Set watch status — error is swallowed")
+    func setWatchStatusError() async throws {
+        let client = makeClient()
+        MockURLProtocol.mockError(path: "/api/watch/status", statusCode: 404, detail: "No access record")
+
+        // Should not throw — best-effort
+        await client.setWatchStatus(videoId: "abc12345678", childId: 1, status: "watched")
+    }
+
     // MARK: - Auth Header
 
     @Test("No Authorization header when key is empty")

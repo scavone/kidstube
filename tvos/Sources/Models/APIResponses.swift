@@ -149,6 +149,20 @@ struct WatchPositionResponse: Codable {
     }
 }
 
+// MARK: - Watch Status
+
+struct WatchStatusBody: Codable {
+    let videoId: String
+    let childId: Int
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case videoId = "video_id"
+        case childId = "child_id"
+        case status
+    }
+}
+
 // MARK: - Heartbeat
 
 struct HeartbeatBody: Codable {

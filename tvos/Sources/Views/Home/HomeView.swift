@@ -94,7 +94,13 @@ struct HomeView: View {
             }
         }
         .sheet(item: $infoItem) { item in
-            VideoInfoSheet(videoId: item.id, childId: item.childId)
+            VideoInfoSheet(
+                videoId: item.id,
+                childId: item.childId,
+                onWatchStatusChanged: { videoId, status in
+                    viewModel.updateLocalWatchStatus(videoId: videoId, status: status)
+                }
+            )
         }
         .alert("Video May Be Cut Short", isPresented: Binding(
             get: { durationWarningVideo != nil },
@@ -214,8 +220,21 @@ struct HomeView: View {
                                         progress: video.watchProgress,
                                         isWatched: video.isWatched
                                     )
-                                    .onLongPressGesture(minimumDuration: 0.5) {
-                                        infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
+                                    .contextMenu {
+                                        Button {
+                                            infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
+                                        } label: {
+                                            Label("Video Info", systemImage: "info.circle")
+                                        }
+                                        Button {
+                                            Task { await viewModel.toggleWatchStatus(video: video, childId: child.id) }
+                                        } label: {
+                                            if video.isWatched {
+                                                Label("Mark as Unwatched", systemImage: "arrow.counterclockwise")
+                                            } else {
+                                                Label("Mark as Watched", systemImage: "checkmark.circle")
+                                            }
+                                        }
                                     }
                                     .onTapGesture {
                                         selectVideo(video)
@@ -509,6 +528,23 @@ final class HomeViewModel: ObservableObject {
             scheduleStatus = try await apiClient.getScheduleStatus(childId: childId)
         } catch {
             // Non-critical — schedule banner just won't show
+        }
+    }
+
+    func toggleWatchStatus(video: Video, childId: Int) async {
+        let newStatus = video.isWatched ? "unwatched" : "watched"
+        updateLocalWatchStatus(videoId: video.videoId, status: newStatus)
+        await apiClient.setWatchStatus(videoId: video.videoId, childId: childId, status: newStatus)
+    }
+
+    func updateLocalWatchStatus(videoId: String, status: String) {
+        guard let index = videos.firstIndex(where: { $0.videoId == videoId }) else { return }
+        if status == "watched" {
+            videos[index].watchStatus = "watched"
+        } else {
+            videos[index].watchStatus = nil
+            videos[index].watchPosition = nil
+            videos[index].watchDuration = nil
         }
     }
 
