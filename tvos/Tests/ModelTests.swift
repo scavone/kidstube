@@ -487,6 +487,26 @@ struct APIResponseModelTests {
         #expect(response.videos.count == 2)
         #expect(response.hasMore)
         #expect(response.total == 50)
+        #expect(response.statusCounts == nil)
+    }
+
+    @Test("Decode catalog response with status_counts")
+    func decodeCatalogWithStatusCounts() throws {
+        let json = """
+        {
+            "videos": [],
+            "has_more": false,
+            "total": 10,
+            "status_counts": {"all": 10, "unwatched": 5, "in_progress": 3, "watched": 2}
+        }
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(CatalogResponse.self, from: json)
+        #expect(response.total == 10)
+        #expect(response.statusCounts?.all == 10)
+        #expect(response.statusCounts?.unwatched == 5)
+        #expect(response.statusCounts?.inProgress == 3)
+        #expect(response.statusCounts?.watched == 2)
     }
 
     @Test("Decode channel")

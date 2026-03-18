@@ -623,10 +623,11 @@ class VideoStore:
                             channel: Optional[str] = None,
                             sort_by: str = "newest",
                             sort_order: Optional[str] = None,
-                            offset: int = 0, limit: int = 24) -> tuple[list[dict], int]:
+                            watch_status: Optional[str] = None,
+                            offset: int = 0, limit: int = 24) -> tuple[list[dict], int, dict]:
         """Get paginated approved videos for a child.
 
-        Returns (videos, total_count).
+        Returns (videos, total_count, status_counts).
         """
         with self._lock:
             where_parts = [
@@ -643,14 +644,43 @@ class VideoStore:
                 where_parts.append("v.channel_name = ? COLLATE NOCASE")
                 params.append(channel)
 
-            where_clause = " AND ".join(where_parts)
+            base_where = " AND ".join(where_parts)
+            base_params = list(params)
 
-            count_row = self.conn.execute(
-                f"""SELECT COUNT(*) FROM child_video_access cva
+            # Status counts (before watch_status filter)
+            _from_join = """FROM child_video_access cva
                     JOIN videos v ON cva.video_id = v.video_id
                     LEFT JOIN child_channels ch
                         ON v.channel_name = ch.channel_name COLLATE NOCASE
-                        AND ch.child_id = cva.child_id
+                        AND ch.child_id = cva.child_id"""
+
+            counts_row = self.conn.execute(
+                f"""SELECT COUNT(*),
+                           SUM(CASE WHEN cva.watch_status IS NULL THEN 1 ELSE 0 END),
+                           SUM(CASE WHEN cva.watch_status = 'in_progress' THEN 1 ELSE 0 END),
+                           SUM(CASE WHEN cva.watch_status = 'watched' THEN 1 ELSE 0 END)
+                    {_from_join}
+                    WHERE {base_where}""",
+                base_params,
+            ).fetchone()
+            status_counts = {
+                "all": counts_row[0] or 0,
+                "unwatched": counts_row[1] or 0,
+                "in_progress": counts_row[2] or 0,
+                "watched": counts_row[3] or 0,
+            }
+
+            # Apply watch_status filter
+            if watch_status == "unwatched":
+                where_parts.append("cva.watch_status IS NULL")
+            elif watch_status in ("in_progress", "watched"):
+                where_parts.append("cva.watch_status = ?")
+                params.append(watch_status)
+
+            where_clause = " AND ".join(where_parts)
+
+            count_row = self.conn.execute(
+                f"""SELECT COUNT(*) {_from_join}
                     WHERE {where_clause}""",
                 params,
             ).fetchone()
@@ -670,17 +700,13 @@ class VideoStore:
                            cva.decided_at as access_decided_at,
                            cva.watch_position, cva.watch_duration, cva.last_watched_at,
                            cva.watch_status
-                    FROM child_video_access cva
-                    JOIN videos v ON cva.video_id = v.video_id
-                    LEFT JOIN child_channels ch
-                        ON v.channel_name = ch.channel_name COLLATE NOCASE
-                        AND ch.child_id = cva.child_id
+                    {_from_join}
                     WHERE {where_clause}
                     ORDER BY {order_clause}
                     LIMIT ? OFFSET ?""",
                 params + [limit, offset],
             )
-            return [dict(row) for row in cursor.fetchall()], total
+            return [dict(row) for row in cursor.fetchall()], total, status_counts
 
     # ── Watch Position (Resume Playback) ─────────────────────────────
 

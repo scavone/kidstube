@@ -349,7 +349,7 @@ class TestChildVideoAccess:
         store.request_video(child["id"], "vid2")
         store.update_video_status(child["id"], "vid1", "approved")
 
-        videos, total = store.get_approved_videos(child["id"])
+        videos, total, _ = store.get_approved_videos(child["id"])
         assert total == 1
         assert videos[0]["video_id"] == "vid1"
 
@@ -686,7 +686,7 @@ class TestWatchPosition:
         store.update_video_status(child["id"], "vid1", "approved")
         store.save_watch_position(child["id"], "vid1", 120, 600)
 
-        videos, total = store.get_approved_videos(child["id"])
+        videos, total, _ = store.get_approved_videos(child["id"])
         assert total == 1
         assert videos[0]["watch_position"] == 120
         assert videos[0]["watch_duration"] == 600
@@ -799,7 +799,7 @@ class TestAutoComplete:
         store.update_video_status(child["id"], "vid1", "approved")
         store.save_watch_position(child["id"], "vid1", 120, 600)
 
-        videos, total = store.get_approved_videos(child["id"])
+        videos, total, _ = store.get_approved_videos(child["id"])
         assert total == 1
         assert videos[0]["watch_status"] == "in_progress"
 

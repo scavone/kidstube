@@ -1096,7 +1096,7 @@ class TelegramBot:
         child_name = child["name"] if child else f"Child#{child_id}"
 
         offset = page * _APPROVED_PAGE_SIZE
-        videos, total = self.video_store.get_approved_videos(
+        videos, total, _ = self.video_store.get_approved_videos(
             child_id, offset=offset, limit=_APPROVED_PAGE_SIZE
         )
 

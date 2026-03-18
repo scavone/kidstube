@@ -200,6 +200,28 @@ struct APIClientTests {
         #expect(response.total == 0)
     }
 
+    @Test("Get catalog with watch_status filter")
+    func getCatalogWithWatchStatus() async throws {
+        let client = makeClient()
+        MockURLProtocol.handlers["/api/catalog"] = { request in
+            let url = request.url!
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            let watchStatus = components.queryItems?.first(where: { $0.name == "watch_status" })?.value
+            #expect(watchStatus == "unwatched")
+            let data = try JSONSerialization.data(withJSONObject: [
+                "videos": [], "has_more": false, "total": 0,
+                "status_counts": ["all": 5, "unwatched": 3, "in_progress": 1, "watched": 1]
+            ])
+            let response = HTTPURLResponse(
+                url: url, statusCode: 200, httpVersion: nil, headerFields: nil
+            )!
+            return (data, response)
+        }
+
+        let response = try await client.getCatalog(childId: 1, watchStatus: "unwatched")
+        #expect(response.statusCounts?.unwatched == 3)
+    }
+
     @Test("Get catalog with sort parameter")
     func getCatalogWithSort() async throws {
         let client = makeClient()

@@ -46,11 +46,26 @@ struct CatalogResponse: Codable {
     let videos: [Video]
     let hasMore: Bool
     let total: Int
+    let statusCounts: StatusCounts?
 
     enum CodingKeys: String, CodingKey {
         case videos
         case hasMore = "has_more"
         case total
+        case statusCounts = "status_counts"
+    }
+}
+
+struct StatusCounts: Codable, Equatable {
+    let all: Int
+    let unwatched: Int
+    let inProgress: Int
+    let watched: Int
+
+    enum CodingKeys: String, CodingKey {
+        case all, unwatched
+        case inProgress = "in_progress"
+        case watched
     }
 }
 

@@ -874,6 +874,87 @@ class TestCatalogSortOptions:
         assert videos[0]["title"] == "Apple Video"  # default for title is ASC
 
 
+class TestCatalogWatchStatusFilter:
+    """Tests for catalog watch_status filter (#21)."""
+
+    def _setup_catalog(self, store):
+        child = store.add_child("Alex")
+        store.add_video("vid_unwatche", "Unwatched Video", "Channel")
+        store.add_video("vid_progress", "In Progress Video", "Channel")
+        store.add_video("vid_watched1", "Watched Video", "Channel")
+        for vid in ["vid_unwatche", "vid_progress", "vid_watched1"]:
+            store.request_video(child["id"], vid)
+            store.update_video_status(child["id"], vid, "approved")
+        store.save_watch_position(child["id"], "vid_progress", 120, 600)
+        store.save_watch_position(child["id"], "vid_watched1", 595, 600)
+        return child
+
+    def test_filter_all(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&watch_status=all", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 3
+
+    def test_filter_unwatched(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&watch_status=unwatched", headers=auth_headers)
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["videos"][0]["video_id"] == "vid_unwatche"
+
+    def test_filter_in_progress(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&watch_status=in_progress", headers=auth_headers)
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["videos"][0]["video_id"] == "vid_progress"
+
+    def test_filter_watched(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1&watch_status=watched", headers=auth_headers)
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["videos"][0]["video_id"] == "vid_watched1"
+
+    def test_filter_invalid_returns_400(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get("/api/catalog?child_id=1&watch_status=bogus", headers=auth_headers)
+        assert resp.status_code == 400
+
+    def test_status_counts_present(self, client, auth_headers, store):
+        self._setup_catalog(store)
+        resp = client.get("/api/catalog?child_id=1", headers=auth_headers)
+        counts = resp.json()["status_counts"]
+        assert counts["all"] == 3
+        assert counts["unwatched"] == 1
+        assert counts["in_progress"] == 1
+        assert counts["watched"] == 1
+
+    def test_status_counts_respect_category_filter(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("vid_edu01234", "Edu", "Ch", category="edu")
+        store.add_video("vid_fun01234", "Fun", "Ch", category="fun")
+        for vid in ["vid_edu01234", "vid_fun01234"]:
+            store.request_video(child["id"], vid)
+            store.update_video_status(child["id"], vid, "approved")
+        resp = client.get("/api/catalog?child_id=1&category=edu", headers=auth_headers)
+        counts = resp.json()["status_counts"]
+        assert counts["all"] == 1
+
+    def test_filter_combines_with_category(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("vid_edu01234", "Edu Unwatched", "Ch", category="edu")
+        store.add_video("vid_fun01234", "Fun Unwatched", "Ch", category="fun")
+        for vid in ["vid_edu01234", "vid_fun01234"]:
+            store.request_video(child["id"], vid)
+            store.update_video_status(child["id"], vid, "approved")
+        resp = client.get(
+            "/api/catalog?child_id=1&category=edu&watch_status=unwatched",
+            headers=auth_headers,
+        )
+        assert resp.json()["total"] == 1
+
+
 class TestFreeDayAPI:
     """Tests for free day pass via API (#32)."""
 

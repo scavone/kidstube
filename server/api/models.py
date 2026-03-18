@@ -102,6 +102,7 @@ class CatalogResponse(BaseModel):
     videos: list[dict]
     has_more: bool
     total: int
+    status_counts: Optional[dict] = None
 
 
 class ChannelRequestResponse(BaseModel):

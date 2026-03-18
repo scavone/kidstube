@@ -18,6 +18,22 @@ enum CatalogSort: String, CaseIterable {
     }
 }
 
+enum WatchStatusFilter: String, CaseIterable {
+    case all
+    case unwatched
+    case inProgress = "in_progress"
+    case watched
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .unwatched: return "Unwatched"
+        case .inProgress: return "In Progress"
+        case .watched: return "Watched"
+        }
+    }
+}
+
 /// Main screen after profile selection: search bar + category filters + approved video catalog.
 struct HomeView: View {
     let child: ChildProfile
@@ -64,6 +80,15 @@ struct HomeView: View {
                     }
                 )
             }
+
+            // Watch status filter row
+            WatchStatusFilterView(
+                selectedFilter: $viewModel.selectedWatchFilter,
+                statusCounts: viewModel.statusCounts,
+                onChange: { _ in
+                    Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                }
+            )
 
             // Catalog grid with optional alphabet rail
             if viewModel.selectedSort == .title && !viewModel.videos.isEmpty {
@@ -296,17 +321,37 @@ struct HomeView: View {
 
     private var emptyCatalog: some View {
         VStack(spacing: 16) {
-            Image(systemName: "film.stack")
+            Image(systemName: emptyCatalogIcon)
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
-            Text("No approved videos yet")
+            Text(emptyCatalogTitle)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("Search for videos and ask a parent to approve them!")
+            Text(emptyCatalogSubtitle)
                 .font(.callout)
                 .foregroundColor(.secondary)
         }
         .padding(60)
+    }
+
+    private var emptyCatalogIcon: String {
+        viewModel.selectedWatchFilter == .all ? "film.stack" : "checkmark.circle"
+    }
+
+    private var emptyCatalogTitle: String {
+        switch viewModel.selectedWatchFilter {
+        case .all: return "No approved videos yet"
+        case .unwatched: return "No unwatched videos"
+        case .inProgress: return "No videos in progress"
+        case .watched: return "No watched videos"
+        }
+    }
+
+    private var emptyCatalogSubtitle: String {
+        if viewModel.selectedWatchFilter == .all {
+            return "Search for videos and ask a parent to approve them!"
+        }
+        return "Try a different filter to see more videos."
     }
 }
 
@@ -419,6 +464,56 @@ struct SortPickerView: View {
     }
 }
 
+// MARK: - Watch Status Filter
+
+struct WatchStatusFilterView: View {
+    @Binding var selectedFilter: WatchStatusFilter
+    let statusCounts: StatusCounts?
+    let onChange: (WatchStatusFilter) -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ForEach(WatchStatusFilter.allCases, id: \.self) { filter in
+                Button {
+                    selectedFilter = filter
+                    onChange(filter)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(filter.label)
+                        if let counts = statusCounts {
+                            Text("(\(countFor(filter, counts: counts)))")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .font(.subheadline)
+                    .fontWeight(selectedFilter == filter ? .bold : .regular)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    .background(
+                        selectedFilter == filter
+                            ? Color.accentColor.opacity(0.3)
+                            : Color.gray.opacity(0.1)
+                    )
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 60)
+        .padding(.bottom, 12)
+    }
+
+    private func countFor(_ filter: WatchStatusFilter, counts: StatusCounts) -> Int {
+        switch filter {
+        case .all: return counts.all
+        case .unwatched: return counts.unwatched
+        case .inProgress: return counts.inProgress
+        case .watched: return counts.watched
+        }
+    }
+}
+
 // MARK: - Alphabet Rail
 
 struct AlphabetRailView: View {
@@ -467,6 +562,8 @@ final class HomeViewModel: ObservableObject {
     @Published var scheduleStatus: ScheduleStatus?
     @Published var selectedCategory: String?
     @Published var selectedSort: CatalogSort = .newest
+    @Published var selectedWatchFilter: WatchStatusFilter = .all
+    @Published var statusCounts: StatusCounts?
     @Published var scrollToLetter: String?
     @Published var isLoading = false
     @Published var hasMore = false
@@ -500,6 +597,7 @@ final class HomeViewModel: ObservableObject {
                 childId: childId,
                 category: selectedCategory,
                 sortBy: selectedSort.rawValue,
+                watchStatus: selectedWatchFilter.rawValue,
                 offset: offset
             )
             if reset {
@@ -509,6 +607,9 @@ final class HomeViewModel: ObservableObject {
             }
             hasMore = response.hasMore
             offset = videos.count
+            if let counts = response.statusCounts {
+                statusCounts = counts
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -583,6 +583,7 @@ async def delete_hls_session(session_id: str):
 
 _CATALOG_SORT_OPTIONS = {"newest", "oldest", "title", "channel"}
 _CATALOG_SORT_ORDERS = {"asc", "desc"}
+_WATCH_STATUS_OPTIONS = {"all", "unwatched", "in_progress", "watched"}
 
 # Natural default order for each sort type
 _SORT_DEFAULT_ORDER = {
@@ -600,6 +601,7 @@ async def get_catalog(
     channel: str = Query("", max_length=200),
     sort_by: str = Query("newest", max_length=20),
     sort_order: str = Query("", max_length=4),
+    watch_status: str = Query("all", max_length=20),
     offset: int = Query(0, ge=0),
     limit: int = Query(24, ge=1, le=100),
 ):
@@ -620,12 +622,19 @@ async def get_catalog(
             detail=f"Invalid sort_order. Options: asc, desc",
         )
 
-    videos, total = video_store.get_approved_videos(
+    if watch_status not in _WATCH_STATUS_OPTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid watch_status. Options: {', '.join(sorted(_WATCH_STATUS_OPTIONS))}",
+        )
+
+    videos, total, status_counts = video_store.get_approved_videos(
         child_id,
         category=category or None,
         channel=channel or None,
         sort_by=sort_by,
         sort_order=effective_order,
+        watch_status=watch_status if watch_status != "all" else None,
         offset=offset,
         limit=limit,
     )
@@ -634,6 +643,7 @@ async def get_catalog(
         "videos": videos,
         "has_more": offset + limit < total,
         "total": total,
+        "status_counts": status_counts,
     }
 
 
