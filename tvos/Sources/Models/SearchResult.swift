@@ -53,8 +53,12 @@ struct ChannelSearchResult: Codable, Identifiable, Equatable {
     var thumbnailUrl: String?
     var subscriberCount: Int?
     var videoCount: Int?
+    var channelStatus: String?
 
     var id: String { channelId }
+
+    var isAllowed: Bool { channelStatus == "allowed" }
+    var isPending: Bool { channelStatus == "pending" }
 
     var formattedSubscriberCount: String {
         guard let count = subscriberCount, count > 0 else { return "" }
@@ -72,6 +76,7 @@ struct ChannelSearchResult: Codable, Identifiable, Equatable {
         case thumbnailUrl = "thumbnail_url"
         case subscriberCount = "subscriber_count"
         case videoCount = "video_count"
+        case channelStatus = "channel_status"
     }
 }
 

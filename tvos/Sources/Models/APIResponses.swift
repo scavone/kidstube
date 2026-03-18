@@ -92,6 +92,36 @@ struct ChannelVideosResponse: Codable {
     }
 }
 
+// MARK: - Channel Request
+
+struct ChannelRequestBody: Codable {
+    let childId: Int
+    let channelId: String
+
+    enum CodingKeys: String, CodingKey {
+        case childId = "child_id"
+        case channelId = "channel_id"
+    }
+}
+
+struct ChannelRequestResponse: Codable {
+    let status: String
+    let channelId: String
+    let childId: Int
+    let channelName: String
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case channelId = "channel_id"
+        case childId = "child_id"
+        case channelName = "channel_name"
+    }
+}
+
+struct ChannelRequestStatusResponse: Codable {
+    let status: String
+}
+
 // MARK: - Watch Position
 
 struct WatchPositionBody: Codable {

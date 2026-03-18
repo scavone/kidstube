@@ -87,6 +87,23 @@ final class APIClient: Sendable {
         return try await get("/api/video/\(videoId)", query: ["child_id": String(childId)])
     }
 
+    // MARK: - Channel Requests
+
+    /// Request a channel for a child.
+    func requestChannel(channelId: String, childId: Int) async throws -> ChannelRequestResponse {
+        let body = ChannelRequestBody(childId: childId, channelId: channelId)
+        return try await post("/api/request-channel", body: body)
+    }
+
+    /// Poll approval status for a channel request.
+    func getChannelRequestStatus(channelId: String, childId: Int) async throws -> String {
+        let response: ChannelRequestStatusResponse = try await get(
+            "/api/channel-request-status/\(channelId)",
+            query: ["child_id": String(childId)]
+        )
+        return response.status
+    }
+
     // MARK: - Video Requests
 
     /// Request access to a video for a child.

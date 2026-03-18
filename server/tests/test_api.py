@@ -1191,3 +1191,99 @@ class TestWatchPositionEndpoint:
             "duration": 600,
         })
         assert resp.status_code == 401
+
+
+class TestChannelRequestEndpoint:
+    def test_request_channel_pending(self, client, auth_headers, store):
+        store.add_child("Alex")
+        with patch.object(
+            InvidiousClient, "get_channel_info",
+            new_callable=AsyncMock,
+            return_value={"channel_id": "UCabcdef12345678901234AB", "name": "Cool Channel", "subscriber_count": 1000},
+        ):
+            resp = client.post("/api/request-channel", headers=auth_headers, json={
+                "child_id": 1,
+                "channel_id": "UCabcdef12345678901234AB",
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "pending"
+        assert data["channel_name"] == "Cool Channel"
+        assert data["channel_id"] == "UCabcdef12345678901234AB"
+
+    def test_request_channel_already_allowed(self, client, auth_headers, store):
+        store.add_child("Alex")
+        store.add_channel(1, "Cool Channel", "allowed", channel_id="UCabcdef12345678901234AB")
+        with patch.object(
+            InvidiousClient, "get_channel_info",
+            new_callable=AsyncMock,
+            return_value={"channel_id": "UCabcdef12345678901234AB", "name": "Cool Channel", "subscriber_count": 1000},
+        ):
+            resp = client.post("/api/request-channel", headers=auth_headers, json={
+                "child_id": 1,
+                "channel_id": "UCabcdef12345678901234AB",
+            })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+
+    def test_request_channel_child_not_found(self, client, auth_headers):
+        with patch.object(
+            InvidiousClient, "get_channel_info",
+            new_callable=AsyncMock,
+            return_value={"channel_id": "UCabcdef12345678901234AB", "name": "Cool Channel"},
+        ):
+            resp = client.post("/api/request-channel", headers=auth_headers, json={
+                "child_id": 999,
+                "channel_id": "UCabcdef12345678901234AB",
+            })
+        assert resp.status_code == 404
+
+    def test_request_channel_invalid_id(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.post("/api/request-channel", headers=auth_headers, json={
+            "child_id": 1,
+            "channel_id": "invalid",
+        })
+        assert resp.status_code == 422  # Pydantic validation
+
+    def test_channel_request_status_polling(self, client, auth_headers, store):
+        store.add_child("Alex")
+        store.request_channel(1, "UCabcdef12345678901234AB", "Cool Channel")
+        resp = client.get(
+            "/api/channel-request-status/UCabcdef12345678901234AB",
+            headers=auth_headers,
+            params={"child_id": 1},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    def test_channel_request_status_not_found(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get(
+            "/api/channel-request-status/UCabcdef12345678901234AB",
+            headers=auth_headers,
+            params={"child_id": 1},
+        )
+        assert resp.status_code == 404
+
+    def test_search_annotates_channel_status(self, client, auth_headers, store):
+        store.add_child("Alex")
+        store.add_channel(1, "Allowed Ch", "allowed")
+        with patch.object(
+            InvidiousClient, "search",
+            new_callable=AsyncMock,
+            return_value=[
+                {"type": "channel", "channel_id": "UC_allowed", "name": "Allowed Ch"},
+                {"type": "channel", "channel_id": "UC_unknown", "name": "New Ch"},
+            ],
+        ):
+            resp = client.get(
+                "/api/search",
+                headers=auth_headers,
+                params={"q": "test", "child_id": 1},
+            )
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert len(results) == 2
+        assert results[0]["channel_status"] == "allowed"
+        assert results[1].get("channel_status") is None

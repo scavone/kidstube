@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var selectedChild: ChildProfile?
     @State private var pendingVideoId: String?
     @State private var pendingVideoTitle: String?
+    @State private var pendingChannelName: String?
     @State private var scheduleUnlockTime: String = ""
     @State private var playerItem: PlayerItem?
     @State private var catalogRefreshTrigger = 0
@@ -57,6 +58,9 @@ struct ContentView: View {
                             onBrowseChannel: { channel in
                                 screen = .channelDetail(channel: channel)
                             },
+                            onRequestChannel: { channel in
+                                requestChannel(channel)
+                            },
                             onBack: { screen = .home }
                         )
                     }
@@ -94,10 +98,31 @@ struct ContentView: View {
                         )
                     }
 
+                case .channelPending(let channel):
+                    if let child = selectedChild {
+                        ChannelPendingView(
+                            channelId: channel.channelId,
+                            channelName: channel.name,
+                            child: child,
+                            onApproved: {
+                                catalogRefreshTrigger += 1
+                                screen = .home
+                            },
+                            onDenied: {
+                                pendingChannelName = channel.name
+                                screen = .denied
+                            },
+                            onCancel: { screen = .home }
+                        )
+                    }
+
                 case .denied:
                     DeniedView(
-                        videoTitle: pendingVideoTitle ?? "this video",
-                        onBack: { screen = .home }
+                        videoTitle: pendingChannelName ?? pendingVideoTitle ?? "this video",
+                        onBack: {
+                            pendingChannelName = nil
+                            screen = .home
+                        }
                     )
 
                 case .timesUp:
@@ -184,6 +209,32 @@ struct ContentView: View {
             }
         }
     }
+
+    private func requestChannel(_ channel: ChannelSearchResult) {
+        Task {
+            let apiClient = APIClient()
+            guard let child = selectedChild else { return }
+            do {
+                let response = try await apiClient.requestChannel(
+                    channelId: channel.channelId,
+                    childId: child.id
+                )
+                await MainActor.run {
+                    if response.status == "approved" {
+                        catalogRefreshTrigger += 1
+                        screen = .home
+                    } else if response.status == "denied" {
+                        pendingChannelName = channel.name
+                        screen = .denied
+                    } else {
+                        screen = .channelPending(channel: channel)
+                    }
+                }
+            } catch {
+                await MainActor.run { screen = .channelPending(channel: channel) }
+            }
+        }
+    }
 }
 
 // MARK: - Player Item
@@ -202,6 +253,7 @@ enum AppScreen: Equatable {
     case search(query: String)
     case channelDetail(channel: ChannelSearchResult)
     case pending
+    case channelPending(channel: ChannelSearchResult)
     case denied
     case timesUp
     case outsideSchedule

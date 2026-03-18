@@ -398,6 +398,42 @@ struct APIClientTests {
         _ = try await client.getProfiles()
     }
 
+    // MARK: - Channel Request
+
+    @Test("Request channel — pending")
+    func requestChannelPending() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/request-channel", json: [
+            "status": "pending", "channel_id": "UCabc123", "child_id": 1, "channel_name": "Cool Channel"
+        ])
+
+        let response = try await client.requestChannel(channelId: "UCabc123", childId: 1)
+        #expect(response.status == "pending")
+        #expect(response.channelName == "Cool Channel")
+    }
+
+    @Test("Request channel — approved")
+    func requestChannelApproved() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/request-channel", json: [
+            "status": "approved", "channel_id": "UCabc123", "child_id": 1, "channel_name": "Cool Channel"
+        ])
+
+        let response = try await client.requestChannel(channelId: "UCabc123", childId: 1)
+        #expect(response.status == "approved")
+    }
+
+    @Test("Get channel request status")
+    func getChannelRequestStatus() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/channel-request-status/UCabc123", json: ["status": "pending"])
+
+        let status = try await client.getChannelRequestStatus(channelId: "UCabc123", childId: 1)
+        #expect(status == "pending")
+    }
+
+    // MARK: - Auth Header
+
     @Test("No Authorization header when key is empty")
     func noAuthWhenKeyEmpty() async throws {
         MockURLProtocol.reset()

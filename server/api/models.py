@@ -39,6 +39,11 @@ class ImportStarterChannelsBody(BaseModel):
     child_id: int = Field(..., gt=0)
 
 
+class ChannelRequestBody(BaseModel):
+    child_id: int = Field(..., gt=0)
+    channel_id: str = Field(..., pattern=r"^UC[a-zA-Z0-9_-]{22}$")
+
+
 # ── Responses ───────────────────────────────────────────────────────
 
 class ChildProfileResponse(BaseModel):
@@ -91,6 +96,13 @@ class CatalogResponse(BaseModel):
     videos: list[dict]
     has_more: bool
     total: int
+
+
+class ChannelRequestResponse(BaseModel):
+    status: str
+    channel_id: str
+    child_id: int
+    channel_name: str
 
 
 class ChannelResponse(BaseModel):

@@ -9,6 +9,7 @@ struct SearchResultsView: View {
     let onWatch: (String) -> Void
     let onRequest: (SearchResult) -> Void
     let onBrowseChannel: (ChannelSearchResult) -> Void
+    let onRequestChannel: (ChannelSearchResult) -> Void
     let onBack: () -> Void
 
     @StateObject private var viewModel = SearchResultsViewModel()
@@ -184,6 +185,35 @@ struct SearchResultsView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.blue)
+
+            channelActionButton(channel)
+        }
+    }
+
+    @ViewBuilder
+    private func channelActionButton(_ channel: ChannelSearchResult) -> some View {
+        if channel.isAllowed {
+            Label("Allowed", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundColor(.green)
+        } else if channel.isPending {
+            Button {} label: {
+                Label("Pending...", systemImage: "clock")
+                    .font(.caption)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(true)
+        } else {
+            Button {
+                viewModel.markChannelAsPending(channelId: channel.channelId)
+                onRequestChannel(channel)
+            } label: {
+                Label("Request Channel", systemImage: "plus.circle")
+                    .font(.caption)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -239,6 +269,17 @@ final class SearchResultsViewModel: ObservableObject {
         if case .video(var result) = items[index] {
             result.accessStatus = "pending"
             items[index] = .video(result)
+        }
+    }
+
+    func markChannelAsPending(channelId: String) {
+        guard let index = items.firstIndex(where: {
+            if case .channel(let c) = $0 { return c.channelId == channelId }
+            return false
+        }) else { return }
+        if case .channel(var channel) = items[index] {
+            channel.channelStatus = "pending"
+            items[index] = .channel(channel)
         }
     }
 }

@@ -284,6 +284,33 @@ struct SearchResultTests {
         channel.subscriberCount = 1_500_000
         #expect(channel.formattedSubscriberCount == "1.5M subscribers")
     }
+
+    @Test("Decode channel search result with channel_status")
+    func decodeChannelWithStatus() throws {
+        let json = """
+        {"channel_id":"UC1234","name":"Cool Channel","subscriber_count":5000,"channel_status":"allowed"}
+        """.data(using: .utf8)!
+        let channel = try JSONDecoder().decode(ChannelSearchResult.self, from: json)
+        #expect(channel.channelStatus == "allowed")
+        #expect(channel.isAllowed)
+        #expect(!channel.isPending)
+    }
+
+    @Test("Channel status nil — not allowed, not pending")
+    func channelStatusNil() {
+        let channel = ChannelSearchResult(channelId: "UC1", name: "Ch")
+        #expect(!channel.isAllowed)
+        #expect(!channel.isPending)
+        #expect(channel.channelStatus == nil)
+    }
+
+    @Test("Channel status pending")
+    func channelStatusPending() {
+        var channel = ChannelSearchResult(channelId: "UC1", name: "Ch")
+        channel.channelStatus = "pending"
+        #expect(channel.isPending)
+        #expect(!channel.isAllowed)
+    }
 }
 
 // MARK: - TimeStatus Tests
@@ -460,5 +487,33 @@ struct APIResponseModelTests {
         #expect(dict["video_id"] as? String == "abc")
         #expect(dict["child_id"] as? Int == 2)
         #expect(dict["seconds"] as? Int == 30)
+    }
+
+    @Test("Decode channel request response")
+    func decodeChannelRequestResponse() throws {
+        let json = """
+        {"status":"pending","channel_id":"UCabc","child_id":1,"channel_name":"Cool Channel"}
+        """.data(using: .utf8)!
+        let response = try JSONDecoder().decode(ChannelRequestResponse.self, from: json)
+        #expect(response.status == "pending")
+        #expect(response.channelId == "UCabc")
+        #expect(response.childId == 1)
+        #expect(response.channelName == "Cool Channel")
+    }
+
+    @Test("Encode channel request body uses snake_case keys")
+    func encodeChannelRequestBody() throws {
+        let body = ChannelRequestBody(childId: 1, channelId: "UCabc")
+        let data = try JSONEncoder().encode(body)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(dict["child_id"] as? Int == 1)
+        #expect(dict["channel_id"] as? String == "UCabc")
+    }
+
+    @Test("Decode channel request status response")
+    func decodeChannelRequestStatusResponse() throws {
+        let json = "{\"status\":\"approved\"}".data(using: .utf8)!
+        let response = try JSONDecoder().decode(ChannelRequestStatusResponse.self, from: json)
+        #expect(response.status == "approved")
     }
 }

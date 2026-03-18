@@ -690,3 +690,56 @@ class TestWatchPosition:
         assert videos[0]["watch_position"] == 120
         assert videos[0]["watch_duration"] == 600
         assert videos[0]["last_watched_at"] is not None
+
+
+class TestChannelRequests:
+    def test_request_channel_pending(self, store):
+        child = store.add_child("Alex")
+        status = store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        assert status == "pending"
+
+    def test_request_channel_already_allowed(self, store):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Test Channel", "allowed")
+        status = store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        assert status == "approved"
+
+    def test_request_channel_already_blocked(self, store):
+        child = store.add_child("Alex")
+        store.add_channel(child["id"], "Test Channel", "blocked")
+        status = store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        assert status == "denied"
+
+    def test_request_channel_idempotent(self, store):
+        child = store.add_child("Alex")
+        status1 = store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        status2 = store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        assert status1 == "pending"
+        assert status2 == "pending"
+
+    def test_get_channel_request_status(self, store):
+        child = store.add_child("Alex")
+        assert store.get_channel_request_status(child["id"], "UCabcdef12345678901234AB") is None
+        store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        assert store.get_channel_request_status(child["id"], "UCabcdef12345678901234AB") == "pending"
+
+    def test_update_channel_request_status(self, store):
+        child = store.add_child("Alex")
+        store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        updated = store.update_channel_request_status(child["id"], "UCabcdef12345678901234AB", "approved")
+        assert updated is True
+        assert store.get_channel_request_status(child["id"], "UCabcdef12345678901234AB") == "approved"
+
+    def test_get_pending_channel_request(self, store):
+        child = store.add_child("Alex")
+        store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        req = store.get_pending_channel_request(child["id"], "UCabcdef12345678901234AB")
+        assert req is not None
+        assert req["channel_name"] == "Test Channel"
+        assert req["status"] == "pending"
+
+    def test_channel_request_cascade_on_child_delete(self, store):
+        child = store.add_child("Alex")
+        store.request_channel(child["id"], "UCabcdef12345678901234AB", "Test Channel")
+        store.remove_child(child["id"])
+        assert store.get_channel_request_status(child["id"], "UCabcdef12345678901234AB") is None

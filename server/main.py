@@ -51,9 +51,10 @@ def create_app(cfg=None) -> FastAPI:
             inv_client=inv_client,
         )
 
-    # Wire up API routes with bot notification callback
+    # Wire up API routes with bot notification callbacks
     notify_cb = bot.notify_new_request if bot else None
-    api_routes.setup(store, inv_client, cfg, notify_cb=notify_cb)
+    notify_channel_cb = bot.notify_channel_request if bot else None
+    api_routes.setup(store, inv_client, cfg, notify_cb=notify_cb, notify_channel_cb=notify_channel_cb)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

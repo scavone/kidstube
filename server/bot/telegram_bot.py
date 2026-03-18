@@ -244,6 +244,54 @@ class TelegramBot:
                 reply_markup=keyboard,
             )
 
+    # ── Channel Request Notification ─────────────────────────────────
+
+    async def notify_channel_request(self, child: dict, channel_info: dict):
+        """Send a channel request notification to the admin.
+
+        Called from api/routes.py when a child requests a channel.
+        """
+        if not self._app or not self.admin_chat_id:
+            return
+
+        child_id = child["id"]
+        child_name = child.get("name", "Unknown")
+        channel_id = channel_info.get("channel_id", "")
+        channel_name = channel_info.get("name", "Unknown")
+        sub_count = channel_info.get("subscriber_count", 0)
+
+        sub_str = ""
+        if sub_count:
+            if sub_count >= 1_000_000:
+                sub_str = f"{sub_count / 1_000_000:.1f}M subscribers"
+            elif sub_count >= 1_000:
+                sub_str = f"{sub_count / 1_000:.0f}K subscribers"
+            else:
+                sub_str = f"{sub_count} subscribers"
+
+        caption = (
+            f"<b>[{_esc(child_name)}] Channel Request</b>\n\n"
+            f"<b>{_esc(channel_name)}</b>"
+        )
+        if sub_str:
+            caption += f"\n{sub_str}"
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Allow (Edu)", callback_data=f"cr_e:{child_id}:{channel_id}"),
+                InlineKeyboardButton("Allow (Fun)", callback_data=f"cr_f:{child_id}:{channel_id}"),
+            ],
+            [InlineKeyboardButton("Deny", callback_data=f"cr_d:{child_id}:{channel_id}")],
+            [InlineKeyboardButton("Block Channel", callback_data=f"cr_b:{child_id}:{channel_id}")],
+        ])
+
+        await self._app.bot.send_message(
+            chat_id=self.admin_chat_id,
+            text=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+
     # ── Callback Handler ───────────────────────────────────────────
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -351,6 +399,57 @@ class TelegramBot:
             video_id = ":".join(parts[3:])
             self.video_store.update_video_status(child_id, video_id, "denied")
             await self._show_approved_page(query.message, child_id, page)
+            return
+
+        # Channel request actions: cr_e/cr_f/cr_d/cr_b:child_id:channel_id
+        if action in ("cr_e", "cr_f", "cr_d", "cr_b") and len(parts) >= 3:
+            child_id = int(parts[1])
+            channel_id = ":".join(parts[2:])
+            child = self.video_store.get_child(child_id)
+            child_name = child["name"] if child else f"Child#{child_id}"
+            cr = self.video_store.get_pending_channel_request(child_id, channel_id)
+            ch_name = cr["channel_name"] if cr else channel_id
+
+            if action in ("cr_e", "cr_f"):
+                category = "edu" if action == "cr_e" else "fun"
+                self.video_store.add_channel(child_id, ch_name, "allowed", channel_id=channel_id, category=category)
+                self.video_store.update_channel_request_status(child_id, channel_id, "approved")
+                # Best-effort: import channel videos
+                import_count = 0
+                if self.inv_client and channel_id:
+                    try:
+                        channel_videos = await self.inv_client.get_channel_videos(channel_id)
+                        import_count = self.video_store.bulk_import_channel_videos(
+                            channel_videos, category, [child_id]
+                        )
+                        logger.info(
+                            "Imported %d videos from channel %s for child %d",
+                            import_count, ch_name, child_id,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to import channel videos for %s (best-effort)",
+                            ch_name, exc_info=True,
+                        )
+                label = "Educational" if category == "edu" else "Entertainment"
+                import_note = f"\n{import_count} channel videos imported." if import_count > 0 else ""
+                await self._send_or_edit(
+                    query.message,
+                    f"Channel <b>{_esc(ch_name)}</b> allowed ({label}) for {_esc(child_name)}.{import_note}",
+                )
+            elif action == "cr_d":
+                self.video_store.update_channel_request_status(child_id, channel_id, "denied")
+                await self._send_or_edit(
+                    query.message,
+                    f"Channel <b>{_esc(ch_name)}</b> denied for {_esc(child_name)}.",
+                )
+            elif action == "cr_b":
+                self.video_store.add_channel(child_id, ch_name, "blocked", channel_id=channel_id)
+                self.video_store.update_channel_request_status(child_id, channel_id, "denied")
+                await self._send_or_edit(
+                    query.message,
+                    f"Channel <b>{_esc(ch_name)}</b> blocked for {_esc(child_name)}.",
+                )
             return
 
         # Approval/denial actions: action:child_id:video_id

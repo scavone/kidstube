@@ -30,11 +30,13 @@ from api.models import (
     CreateChildBody,
     UpdateChildBody,
     ImportStarterChannelsBody,
+    ChannelRequestBody,
     HeartbeatResponse,
     VideoStatusResponse,
     StreamUrlResponse,
     TimeStatusResponse,
     ScheduleStatusResponse,
+    ChannelRequestResponse,
 )
 from utils import (
     get_today_str,
@@ -58,6 +60,7 @@ VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 video_store = None
 invidious_client = None
 notify_callback = None
+notify_channel_callback = None
 config = None
 
 # Heartbeat dedup: (child_id, video_id) -> monotonic timestamp
@@ -68,6 +71,7 @@ _heartbeat_last_cleanup: float = 0.0
 
 # Notification dedup: (child_id, video_id) -> monotonic timestamp
 _last_notification: dict[tuple[int, str], float] = {}
+_last_channel_notification: dict[tuple[int, str], float] = {}
 _NOTIFICATION_MIN_INTERVAL = 60  # seconds
 
 # Server-side ffmpeg HLS muxing for HQ adaptive streams
@@ -89,13 +93,14 @@ _HLS_SESSION_MAX_AGE = 7200  # 2 hours
 _HLS_SEGMENT_SECONDS = 2  # Short segments for faster initial playback
 
 
-def setup(store, inv_client, cfg, notify_cb=None):
+def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None):
     """Called by main.py to inject dependencies."""
-    global video_store, invidious_client, config, notify_callback
+    global video_store, invidious_client, config, notify_callback, notify_channel_callback
     video_store = store
     invidious_client = inv_client
     config = cfg
     notify_callback = notify_cb
+    notify_channel_callback = notify_channel_cb
 
 
 # ── Profiles ────────────────────────────────────────────────────────
@@ -205,6 +210,15 @@ async def search_videos(
             # Filter blocked channels
             if blocked and r.get("name", "").lower() in blocked:
                 continue
+            # Annotate with channel status for the child
+            ch_name = r.get("name", "")
+            ch_id = r.get("channel_id", "")
+            if ch_name and video_store.is_channel_allowed(child_id, ch_name):
+                r["channel_status"] = "allowed"
+            elif ch_id:
+                req_status = video_store.get_channel_request_status(child_id, ch_id)
+                if req_status == "pending":
+                    r["channel_status"] = "pending"
             results.append(r)
 
         elif r.get("type") == "video":
@@ -342,6 +356,61 @@ async def request_video(request: Request, body: VideoRequestBody):
         status = "approved"
 
     return {"status": status, "video_id": body.video_id, "child_id": body.child_id}
+
+
+# ── Request Channel ────────────────────────────────────────────────
+
+@router.post("/request-channel")
+@limiter.limit("20/minute")
+async def request_channel(request: Request, body: ChannelRequestBody):
+    child = video_store.get_child(body.child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    if not CHANNEL_ID_RE.match(body.channel_id):
+        raise HTTPException(status_code=400, detail="Invalid channel ID format")
+
+    # Fetch channel info from Invidious for the name
+    channel_info = await invidious_client.get_channel_info(body.channel_id)
+    if not channel_info:
+        raise HTTPException(status_code=404, detail="Channel not found on Invidious")
+
+    channel_name = channel_info.get("name", body.channel_id)
+
+    status = video_store.request_channel(body.child_id, body.channel_id, channel_name)
+
+    # If pending, notify parent via Telegram (with dedup)
+    if status == "pending" and notify_channel_callback:
+        notif_key = (body.child_id, body.channel_id)
+        now = time.monotonic()
+        last_notif = _last_channel_notification.get(notif_key, 0.0)
+        if now - last_notif >= _NOTIFICATION_MIN_INTERVAL:
+            _last_channel_notification[notif_key] = now
+            await notify_channel_callback(child, channel_info)
+
+    return ChannelRequestResponse(
+        status=status,
+        channel_id=body.channel_id,
+        child_id=body.child_id,
+        channel_name=channel_name,
+    )
+
+
+@router.get("/channel-request-status/{channel_id}")
+async def get_channel_request_status(
+    channel_id: str,
+    child_id: int = Query(..., gt=0),
+):
+    if not CHANNEL_ID_RE.match(channel_id):
+        raise HTTPException(status_code=400, detail="Invalid channel ID format")
+
+    # Check if the channel has been allowed since the request was made
+    # (e.g., parent approved via Telegram callback)
+    status = video_store.get_channel_request_status(child_id, channel_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="No channel request found")
+
+    return {"status": status}
 
 
 # ── Status Polling ──────────────────────────────────────────────────

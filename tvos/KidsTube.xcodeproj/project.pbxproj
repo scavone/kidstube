@@ -10,6 +10,7 @@
 		009A8D29D3300149AF3AE3D8 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938C415755895C049FA2E79F /* PlayerView.swift */; };
 		0BB7FF2E5D4FB17D66200C89 /* ChannelDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1E5681F46B78AEB2C356FAC /* ChannelDetailView.swift */; };
 		0FBFBBE4462308DBBE42BDEB /* TimeBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AEC626AEF1ABEA4CD02E20 /* TimeBadge.swift */; };
+		142FA888676C9B7E1CB22536 /* ChannelPendingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74627DBE52ECBC70E6F772EB /* ChannelPendingView.swift */; };
 		15B22913202F07EE360413E3 /* VideoCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B07F3A96BBD823D62CCBC29F /* VideoCard.swift */; };
 		1D581FA6A171DDCB06EA4150 /* ChannelCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36915EFA6900A27429E58E08 /* ChannelCard.swift */; };
 		44C8517A72A3920CD9659F1B /* Video.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6980148DEA0FB0DDEF91F68 /* Video.swift */; };
@@ -62,6 +63,7 @@
 		55250D820FC36E2220E952CD /* KidsTubeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KidsTubeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		667203D0B3FE03608D39B936 /* TimesUpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimesUpView.swift; sourceTree = "<group>"; };
 		70F2637203B562EC8EE3F147 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		74627DBE52ECBC70E6F772EB /* ChannelPendingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelPendingView.swift; sourceTree = "<group>"; };
 		7CCC9AA078FCA1842183EB37 /* TimeStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeStatus.swift; sourceTree = "<group>"; };
 		7CE7EEA9FEAB2C699AA4C6A9 /* KidsTubeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KidsTubeApp.swift; sourceTree = "<group>"; };
 		92D027527EC22BD349825819 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -185,6 +187,7 @@
 		77EB3316D98FD779C31BA0D7 /* Pending */ = {
 			isa = PBXGroup;
 			children = (
+				74627DBE52ECBC70E6F772EB /* ChannelPendingView.swift */,
 				F8FF22F8D0FB28ABC4FCAFE8 /* PendingView.swift */,
 			);
 			path = Pending;
@@ -355,6 +358,7 @@
 				8503682CCA8A48E192875195 /* APIResponses.swift in Sources */,
 				1D581FA6A171DDCB06EA4150 /* ChannelCard.swift in Sources */,
 				0BB7FF2E5D4FB17D66200C89 /* ChannelDetailView.swift in Sources */,
+				142FA888676C9B7E1CB22536 /* ChannelPendingView.swift in Sources */,
 				94EA5FAAD36DC39387B3D7ED /* ChildProfile.swift in Sources */,
 				EC032307074C64B960EE244B /* Config.swift in Sources */,
 				E9B2B05685310772D8C14825 /* ContentView.swift in Sources */,

@@ -111,6 +111,17 @@ class VideoStore:
                 FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS channel_requests (
+                child_id INTEGER NOT NULL,
+                channel_id TEXT NOT NULL,
+                channel_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+                decided_at TEXT,
+                PRIMARY KEY (child_id, channel_id),
+                FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS word_filters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -897,6 +908,79 @@ class VideoStore:
                 (child_id, name),
             ).fetchone()
             return row is not None
+
+    # ── Channel Requests ─────────────────────────────────────────────
+
+    def request_channel(self, child_id: int, channel_id: str, channel_name: str) -> str:
+        """Request a channel for a child.
+
+        Returns 'approved', 'denied', or 'pending'.
+        If the channel is already allowed/blocked, returns immediately.
+        """
+        with self._lock:
+            # Check allowed/blocked by channel name
+            blocked = self.conn.execute(
+                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'blocked'",
+                (child_id, channel_name),
+            ).fetchone()
+            if blocked:
+                return "denied"
+
+            allowed = self.conn.execute(
+                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
+                (child_id, channel_name),
+            ).fetchone()
+            if allowed:
+                return "approved"
+
+            # Insert request (idempotent)
+            cursor = self.conn.execute(
+                """INSERT OR IGNORE INTO channel_requests
+                   (child_id, channel_id, channel_name)
+                   VALUES (?, ?, ?)""",
+                (child_id, channel_id, channel_name),
+            )
+            self.conn.commit()
+
+            if cursor.rowcount == 0:
+                # Row already existed — return existing status
+                row = self.conn.execute(
+                    "SELECT status FROM channel_requests WHERE child_id = ? AND channel_id = ?",
+                    (child_id, channel_id),
+                ).fetchone()
+                return row[0] if row else "pending"
+
+            return "pending"
+
+    def get_channel_request_status(self, child_id: int, channel_id: str) -> Optional[str]:
+        """Get a child's channel request status. Returns status or None."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT status FROM channel_requests WHERE child_id = ? AND channel_id = ?",
+                (child_id, channel_id),
+            ).fetchone()
+            return row[0] if row else None
+
+    def update_channel_request_status(self, child_id: int, channel_id: str, status: str) -> bool:
+        """Update a channel request status. Returns True if updated."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """UPDATE channel_requests
+                   SET status = ?, decided_at = datetime('now')
+                   WHERE child_id = ? AND channel_id = ?""",
+                (status, child_id, channel_id),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def get_pending_channel_request(self, child_id: int, channel_id: str) -> Optional[dict]:
+        """Get a pending channel request row. Returns dict or None."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM channel_requests WHERE child_id = ? AND channel_id = ?",
+                (child_id, channel_id),
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_blocked_channels_set(self, child_id: int) -> set[str]:
         with self._lock:
