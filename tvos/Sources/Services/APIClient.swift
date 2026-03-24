@@ -280,6 +280,29 @@ final class APIClient: Sendable {
         return try await get("/api/time-request/status", query: ["child_id": String(childId)])
     }
 
+    // MARK: - Pairing (No Auth Required)
+
+    /// Request a new pairing session. Called against a server URL before credentials exist.
+    /// Uses an unauthenticated request since the device has no API key yet.
+    func requestPairing() async throws -> PairRequestResponse {
+        let url = try buildURL(path: "/api/pair/request")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // No auth — pairing endpoint is public
+        request.httpBody = try JSONEncoder().encode(["device_name": "Apple TV"])
+        return try await execute(request)
+    }
+
+    /// Poll the status of a pairing session. Returns confirmed + API key when parent approves.
+    func getPairStatus(token: String) async throws -> PairStatusResponse {
+        let url = try buildURL(path: "/api/pair/status/\(token)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        // No auth — pairing endpoint is public
+        return try await execute(request)
+    }
+
     // MARK: - Private HTTP Helpers
 
     private func get<T: Decodable>(

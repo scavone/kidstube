@@ -256,6 +256,12 @@ Once running, message your bot on Telegram. Commands:
 | `/time [Child]` | View/set time limits and schedule |
 | `/freeday [Child]` | Grant unlimited watch time for today |
 
+**Devices**
+
+| Command | Description |
+|---|---|
+| `/devices` | List paired devices with option to revoke |
+
 Child name can be omitted when only one child exists.
 
 ### Schedule & Time Controls
@@ -295,7 +301,7 @@ Photo avatars: Send a photo to the bot with caption `avatar ChildName`.
 
 ## API Endpoints
 
-All `/api/*` endpoints require `Authorization: Bearer <BRG_API_KEY>` except avatar serving and HLS segment delivery.
+All `/api/*` endpoints require `Authorization: Bearer <BRG_API_KEY>` except avatar serving, HLS segment delivery, and pairing endpoints.
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -319,6 +325,12 @@ All `/api/*` endpoints require `Authorization: Bearer <BRG_API_KEY>` except avat
 | `/api/watch-heartbeat` | POST | Report playback progress |
 | `/api/time-status` | GET | Remaining time budget |
 | `/api/schedule-status` | GET | Check schedule window |
+| `/api/pair/request` | POST | Initiate device pairing (public, rate-limited) |
+| `/api/pair/status/{token}` | GET | Poll pairing status (public) |
+| `/api/pair/confirm/{token}` | POST | Admin confirms pairing, issues device API key |
+| `/api/pair/confirm-by-pin` | POST | Admin confirms pairing by PIN |
+| `/api/devices` | GET | List paired devices |
+| `/api/devices/{id}` | DELETE | Revoke a paired device |
 | `/api/hls/{session_id}/{file}` | GET | Serve HLS segments (public) |
 | `/api/hls/{session_id}` | DELETE | Clean up HLS session |
 

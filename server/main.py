@@ -56,12 +56,14 @@ def create_app(cfg=None) -> FastAPI:
     notify_channel_cb = bot.notify_channel_request if bot else None
     notify_time_expired_cb = bot.notify_time_expired if bot else None
     notify_time_request_cb = bot.notify_time_request if bot else None
+    notify_pairing_cb = bot.notify_pairing_request if bot else None
     api_routes.setup(
         store, inv_client, cfg,
         notify_cb=notify_cb,
         notify_channel_cb=notify_channel_cb,
         notify_time_expired_cb=notify_time_expired_cb,
         notify_time_request_cb=notify_time_request_cb,
+        notify_pairing_cb=notify_pairing_cb,
     )
 
     @asynccontextmanager

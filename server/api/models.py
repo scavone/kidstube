@@ -180,3 +180,39 @@ class ChannelDetailResponse(BaseModel):
     videos: list[dict]
     has_more: bool
     total: int
+
+
+# ── Pairing ─────────────────────────────────────────────────────
+
+class PairRequestBody(BaseModel):
+    device_name: Optional[str] = Field(default=None, max_length=100)
+
+
+class PairRequestResponse(BaseModel):
+    token: str
+    pin: str
+    expires_at: str
+    expires_in: int  # seconds until expiry
+
+
+class PairStatusResponse(BaseModel):
+    status: str  # pending, confirmed, expired, denied
+    api_key: Optional[str] = None
+    server_url: Optional[str] = None
+
+
+class PairConfirmBody(BaseModel):
+    device_name: Optional[str] = Field(default=None, max_length=100)
+
+
+class PairConfirmByPinBody(BaseModel):
+    pin: str = Field(..., pattern=r"^\d{6}$")
+    device_name: Optional[str] = Field(default=None, max_length=100)
+
+
+class PairedDeviceResponse(BaseModel):
+    id: int
+    device_name: str
+    paired_at: str
+    last_seen_at: Optional[str] = None
+    is_active: bool

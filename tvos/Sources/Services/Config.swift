@@ -1,16 +1,24 @@
 import Foundation
 
 /// Central configuration for the KidsTube tvOS app.
-/// Server URL and API key are read from Info.plist (set via Secrets.xcconfig).
+/// Credentials are resolved in order: Keychain (paired) → Info.plist (build-time) → fallback.
 enum Config {
     /// Base URL of the BrainRotGuard server (no trailing slash).
+    /// Checks Keychain first (set during pairing), falls back to Info.plist / build-time config.
     static var serverBaseURL: String {
-        infoPlistString(key: "BRGServerURL", fallback: "http://localhost:8080")
+        if let stored = CredentialStore.serverURL {
+            return stored
+        }
+        return infoPlistString(key: "BRGServerURL", fallback: "http://localhost:8080")
     }
 
     /// Shared API key matching the server's BRG_API_KEY environment variable.
+    /// Checks Keychain first (set during pairing), falls back to Info.plist / build-time config.
     static var apiKey: String {
-        infoPlistString(key: "BRGAPIKey", fallback: "")
+        if let stored = CredentialStore.apiKey {
+            return stored
+        }
+        return infoPlistString(key: "BRGAPIKey", fallback: "")
     }
 
     /// How often (in seconds) the pending view polls for approval status.

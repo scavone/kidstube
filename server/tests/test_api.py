@@ -1893,3 +1893,144 @@ class TestTimeRequestEndpoint:
         )
         assert resp.status_code == 200
         assert resp.json()["remaining"] == -3
+
+
+# ── Pairing Endpoints ──────────────────────────────────────────────
+
+class TestPairingEndpoints:
+    """Tests for the device pairing workflow."""
+
+    def test_pair_request_returns_token_and_pin(self, client):
+        """POST /api/pair/request returns token, pin, expires_at, expires_in."""
+        resp = client.post("/api/pair/request")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "token" in data
+        assert "pin" in data
+        assert len(data["pin"]) == 6
+        assert data["pin"].isdigit()
+        assert "expires_at" in data
+        assert "expires_in" in data
+        assert data["expires_in"] > 0
+
+    def test_pair_request_no_auth_needed(self, client):
+        """Pairing request does not require auth."""
+        resp = client.post("/api/pair/request")
+        assert resp.status_code == 200
+
+    def test_pair_request_with_device_name(self, client):
+        """Can provide optional device_name."""
+        resp = client.post("/api/pair/request", json={"device_name": "Living Room TV"})
+        assert resp.status_code == 200
+
+    def test_pair_status_pending(self, client):
+        """New pairing starts as pending."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        resp = client.get(f"/api/pair/status/{token}")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    def test_pair_status_no_auth_needed(self, client):
+        """Status polling does not require auth."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        resp = client.get(f"/api/pair/status/{token}")
+        assert resp.status_code == 200
+
+    def test_pair_status_unknown_token(self, client):
+        """Unknown token returns 404."""
+        resp = client.get("/api/pair/status/nonexistent-token")
+        assert resp.status_code == 404
+
+    def test_pair_confirm_requires_auth(self, client):
+        """Confirm requires admin auth."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        resp = client.post(f"/api/pair/confirm/{token}")
+        assert resp.status_code == 401
+
+    def test_pair_confirm_success(self, client, auth_headers):
+        """Admin can confirm pairing and get device api_key."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        resp = client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "confirmed"
+        assert "api_key" in data
+        assert "device_id" in data
+
+    def test_pair_confirm_by_pin(self, client, auth_headers):
+        """Admin can confirm by entering the PIN."""
+        create_resp = client.post("/api/pair/request")
+        pin = create_resp.json()["pin"]
+        resp = client.post("/api/pair/confirm-by-pin",
+                           json={"pin": pin}, headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "confirmed"
+
+    def test_pair_status_after_confirm(self, client, auth_headers):
+        """After confirm, status shows confirmed with api_key."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+        resp = client.get(f"/api/pair/status/{token}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "confirmed"
+        assert data["api_key"] is not None
+        assert len(data["api_key"]) >= 32
+
+    def test_device_key_works_for_auth(self, client, auth_headers):
+        """Issued device key can authenticate to protected endpoints."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        confirm_resp = client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+        new_key = confirm_resp.json()["api_key"]
+        resp = client.get("/api/profiles",
+                          headers={"Authorization": f"Bearer {new_key}"})
+        assert resp.status_code == 200
+
+    def test_list_devices(self, client, auth_headers):
+        """GET /api/devices lists paired devices."""
+        create_resp = client.post("/api/pair/request",
+                                  json={"device_name": "Test TV"})
+        token = create_resp.json()["token"]
+        client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+        resp = client.get("/api/devices", headers=auth_headers)
+        assert resp.status_code == 200
+        devices = resp.json()["devices"]
+        assert len(devices) >= 1
+        assert any(d["device_name"] == "Test TV" for d in devices)
+
+    def test_list_devices_requires_auth(self, client):
+        resp = client.get("/api/devices")
+        assert resp.status_code == 401
+
+    def test_revoke_device(self, client, auth_headers):
+        """DELETE /api/devices/{id} revokes a device."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        confirm_resp = client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+        device_key = confirm_resp.json()["api_key"]
+        devices = client.get("/api/devices", headers=auth_headers).json()["devices"]
+        device_id = devices[0]["id"]
+        resp = client.delete(f"/api/devices/{device_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        # Verify revoked key no longer works
+        resp = client.get("/api/profiles",
+                          headers={"Authorization": f"Bearer {device_key}"})
+        assert resp.status_code == 401
+
+    def test_revoke_nonexistent_device(self, client, auth_headers):
+        resp = client.delete("/api/devices/999", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_double_confirm_returns_409(self, client, auth_headers):
+        """Confirming an already-confirmed pairing returns 409."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+        resp = client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+        assert resp.status_code == 409

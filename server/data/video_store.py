@@ -7,6 +7,7 @@ Extends BrainRotGuard's VideoStore patterns with:
 - watch_log keyed by child_id
 """
 
+import secrets
 import sqlite3
 import threading
 from pathlib import Path
@@ -145,6 +146,27 @@ class VideoStore:
 
             CREATE INDEX IF NOT EXISTS idx_search_log_date
                 ON search_log(searched_at);
+
+            CREATE TABLE IF NOT EXISTS pairing_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT NOT NULL UNIQUE,
+                pin TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                device_name TEXT,
+                device_api_key TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL,
+                confirmed_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS paired_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_name TEXT NOT NULL,
+                api_key TEXT NOT NULL UNIQUE,
+                paired_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen_at TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1
+            );
         """)
         self.conn.commit()
         self._migrate()
@@ -1329,6 +1351,143 @@ class VideoStore:
                        FROM child_video_access"""
                 ).fetchone()
             return dict(row) if row else {"total": 0, "pending": 0, "approved": 0, "denied": 0}
+
+    # ── Pairing ─────────────────────────────────────────────────────
+
+    def create_pairing_session(self, device_name: str | None = None,
+                               expiry_minutes: int = 5) -> dict:
+        """Create a new pairing session with a unique token and 6-digit pin.
+
+        Returns dict with token, pin, expires_at.
+        """
+        token = secrets.token_urlsafe(32)
+        pin = f"{secrets.randbelow(1_000_000):06d}"
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO pairing_sessions (token, pin, device_name, expires_at)
+                   VALUES (?, ?, ?, datetime('now', ?))""",
+                (token, pin, device_name,
+                 f"+{expiry_minutes} minutes"),
+            )
+            self.conn.commit()
+            row = self.conn.execute(
+                "SELECT * FROM pairing_sessions WHERE token = ?", (token,)
+            ).fetchone()
+            return dict(row)
+
+    def get_pairing_session(self, token: str) -> Optional[dict]:
+        """Get a pairing session by token."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM pairing_sessions WHERE token = ?", (token,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_pairing_session_by_pin(self, pin: str) -> Optional[dict]:
+        """Get a pending, non-expired pairing session by pin."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT * FROM pairing_sessions
+                   WHERE pin = ? AND status = 'pending'
+                     AND expires_at > datetime('now')
+                   ORDER BY created_at DESC LIMIT 1""",
+                (pin,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def confirm_pairing(self, token: str, device_name: str | None = None) -> Optional[dict]:
+        """Confirm a pairing session, issue a device API key.
+
+        Returns the paired_device dict with the api_key, or None if
+        token is invalid/expired/already confirmed.
+        """
+        with self._lock:
+            session = self.conn.execute(
+                """SELECT * FROM pairing_sessions
+                   WHERE token = ? AND status = 'pending'
+                     AND expires_at > datetime('now')""",
+                (token,),
+            ).fetchone()
+            if not session:
+                return None
+
+            # Generate a long-lived API key for the device
+            device_api_key = secrets.token_urlsafe(48)
+            name = device_name or session["device_name"] or "Apple TV"
+
+            self.conn.execute(
+                """UPDATE pairing_sessions
+                   SET status = 'confirmed', confirmed_at = datetime('now')
+                   WHERE token = ?""",
+                (token,),
+            )
+            self.conn.execute(
+                """INSERT INTO paired_devices (device_name, api_key)
+                   VALUES (?, ?)""",
+                (name, device_api_key),
+            )
+            self.conn.commit()
+
+            device = self.conn.execute(
+                "SELECT * FROM paired_devices WHERE api_key = ?",
+                (device_api_key,),
+            ).fetchone()
+            return dict(device)
+
+    def set_pairing_device_key(self, token: str, api_key: str) -> None:
+        """Store the issued API key on the pairing session for status polling."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE pairing_sessions SET device_api_key = ? WHERE token = ?",
+                (api_key, token),
+            )
+            self.conn.commit()
+
+    def get_paired_devices(self) -> list[dict]:
+        """List all paired devices."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, device_name, paired_at, last_seen_at, is_active FROM paired_devices ORDER BY paired_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def revoke_device(self, device_id: int) -> bool:
+        """Revoke (deactivate) a paired device. Returns True if found."""
+        with self._lock:
+            cursor = self.conn.execute(
+                "UPDATE paired_devices SET is_active = 0 WHERE id = ? AND is_active = 1",
+                (device_id,),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def get_device_by_api_key(self, api_key: str) -> Optional[dict]:
+        """Look up a paired device by its API key."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM paired_devices WHERE api_key = ? AND is_active = 1",
+                (api_key,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_device_last_seen(self, device_id: int) -> None:
+        """Touch the last_seen_at timestamp for a device."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE paired_devices SET last_seen_at = datetime('now') WHERE id = ?",
+                (device_id,),
+            )
+            self.conn.commit()
+
+    def cleanup_expired_pairing_sessions(self) -> int:
+        """Delete expired pending sessions. Returns count deleted."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """DELETE FROM pairing_sessions
+                   WHERE status = 'pending' AND expires_at <= datetime('now')"""
+            )
+            self.conn.commit()
+            return cursor.rowcount
 
     def close(self) -> None:
         self.conn.close()

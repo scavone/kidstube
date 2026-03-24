@@ -981,3 +981,116 @@ class TestAutoComplete:
         assert pos["watch_status"] is None
         assert pos["watch_position"] == 0
         assert pos["watch_duration"] == 0
+
+
+class TestPairing:
+    """Tests for pairing session and device management."""
+
+    def test_create_pairing_session(self, store):
+        session = store.create_pairing_session(device_name="Test TV")
+        assert session["token"]
+        assert len(session["pin"]) == 6
+        assert session["pin"].isdigit()
+        assert session["status"] == "pending"
+        assert session["device_name"] == "Test TV"
+
+    def test_get_pairing_session(self, store):
+        session = store.create_pairing_session()
+        fetched = store.get_pairing_session(session["token"])
+        assert fetched is not None
+        assert fetched["token"] == session["token"]
+
+    def test_get_pairing_session_not_found(self, store):
+        assert store.get_pairing_session("nonexistent") is None
+
+    def test_get_pairing_session_by_pin(self, store):
+        session = store.create_pairing_session()
+        found = store.get_pairing_session_by_pin(session["pin"])
+        assert found is not None
+        assert found["token"] == session["token"]
+
+    def test_get_pairing_session_by_pin_not_found(self, store):
+        assert store.get_pairing_session_by_pin("000000") is None
+
+    def test_confirm_pairing(self, store):
+        session = store.create_pairing_session(device_name="Living Room")
+        device = store.confirm_pairing(session["token"])
+        assert device is not None
+        assert device["device_name"] == "Living Room"
+        assert device["api_key"]
+        assert device["is_active"] == 1
+
+    def test_confirm_pairing_custom_name(self, store):
+        session = store.create_pairing_session(device_name="Old Name")
+        device = store.confirm_pairing(session["token"], device_name="New Name")
+        assert device["device_name"] == "New Name"
+
+    def test_confirm_pairing_default_name(self, store):
+        session = store.create_pairing_session()
+        device = store.confirm_pairing(session["token"])
+        assert device["device_name"] == "Apple TV"
+
+    def test_confirm_pairing_updates_session_status(self, store):
+        session = store.create_pairing_session()
+        store.confirm_pairing(session["token"])
+        updated = store.get_pairing_session(session["token"])
+        assert updated["status"] == "confirmed"
+
+    def test_confirm_already_confirmed_returns_none(self, store):
+        session = store.create_pairing_session()
+        store.confirm_pairing(session["token"])
+        assert store.confirm_pairing(session["token"]) is None
+
+    def test_set_and_get_device_key(self, store):
+        session = store.create_pairing_session()
+        device = store.confirm_pairing(session["token"])
+        store.set_pairing_device_key(session["token"], device["api_key"])
+        updated = store.get_pairing_session(session["token"])
+        assert updated["device_api_key"] == device["api_key"]
+
+    def test_get_paired_devices(self, store):
+        s1 = store.create_pairing_session(device_name="TV 1")
+        s2 = store.create_pairing_session(device_name="TV 2")
+        store.confirm_pairing(s1["token"])
+        store.confirm_pairing(s2["token"])
+        devices = store.get_paired_devices()
+        assert len(devices) == 2
+
+    def test_revoke_device(self, store):
+        session = store.create_pairing_session()
+        device = store.confirm_pairing(session["token"])
+        assert store.revoke_device(device["id"])
+        # After revoke, get_device_by_api_key returns None
+        assert store.get_device_by_api_key(device["api_key"]) is None
+
+    def test_revoke_nonexistent(self, store):
+        assert not store.revoke_device(999)
+
+    def test_get_device_by_api_key(self, store):
+        session = store.create_pairing_session()
+        device = store.confirm_pairing(session["token"])
+        found = store.get_device_by_api_key(device["api_key"])
+        assert found is not None
+        assert found["id"] == device["id"]
+
+    def test_update_device_last_seen(self, store):
+        session = store.create_pairing_session()
+        device = store.confirm_pairing(session["token"])
+        assert device.get("last_seen_at") is None
+        store.update_device_last_seen(device["id"])
+        devices = store.get_paired_devices()
+        assert devices[0]["last_seen_at"] is not None
+
+    def test_cleanup_expired_sessions(self, store):
+        # Create a session with very short expiry
+        session = store.create_pairing_session(expiry_minutes=0)
+        # It should be expired immediately
+        count = store.cleanup_expired_pairing_sessions()
+        assert count >= 1
+
+    def test_unique_api_keys(self, store):
+        s1 = store.create_pairing_session()
+        s2 = store.create_pairing_session()
+        d1 = store.confirm_pairing(s1["token"])
+        d2 = store.confirm_pairing(s2["token"])
+        assert d1["api_key"] != d2["api_key"]

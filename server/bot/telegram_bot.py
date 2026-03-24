@@ -110,6 +110,7 @@ class TelegramBot:
             CommandHandler("watch", self._cmd_watch),
             CommandHandler("search", self._cmd_search),
             CommandHandler("freeday", self._cmd_freeday),
+            CommandHandler("devices", self._cmd_devices),
             MessageHandler(filters.PHOTO & ~filters.COMMAND, self._handle_photo),
             CallbackQueryHandler(self._handle_callback),
         ]
@@ -357,6 +358,40 @@ class TelegramBot:
             reply_markup=keyboard,
         )
 
+    # ── Pairing Notification ─────────────────────────────────────────
+
+    async def notify_pairing_request(self, session: dict):
+        """Send a pairing request notification to the admin.
+
+        Called from api/routes.py when a TV app requests pairing.
+        """
+        if not self._app or not self.admin_chat_id:
+            return
+
+        token = session["token"]
+        pin = session["pin"]
+        device_name = session.get("device_name") or "Unknown device"
+        expires_at = session["expires_at"]
+
+        text = (
+            f"<b>📺 New Device Pairing Request</b>\n\n"
+            f"Device: <b>{_esc(device_name)}</b>\n"
+            f"PIN: <code>{pin}</code>\n"
+            f"Expires: {expires_at} UTC"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Approve", callback_data=f"pair_ok:{token}")],
+            [InlineKeyboardButton("Deny", callback_data=f"pair_deny:{token}")],
+        ])
+
+        await self._app.bot.send_message(
+            chat_id=self.admin_chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+
     # ── Callback Handler ───────────────────────────────────────────
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -577,6 +612,49 @@ class TelegramBot:
             )
             return
 
+        # Pairing actions: pair_ok/pair_deny:token
+        if action == "pair_ok" and len(parts) >= 2:
+            token = ":".join(parts[1:])
+            device = self.video_store.confirm_pairing(token)
+            if device:
+                self.video_store.set_pairing_device_key(token, device["api_key"])
+                await self._send_or_edit(
+                    query.message,
+                    f"Device <b>{_esc(device['device_name'])}</b> paired successfully.",
+                )
+            else:
+                session = self.video_store.get_pairing_session(token)
+                if session and session["status"] == "confirmed":
+                    await self._send_or_edit(query.message, "Already paired.")
+                else:
+                    await self._send_or_edit(query.message, "Pairing session expired or not found.")
+            return
+
+        # Device revoke: dev_revoke:device_id
+        if action == "dev_revoke" and len(parts) >= 2:
+            device_id = int(parts[1])
+            if self.video_store.revoke_device(device_id):
+                await self._send_or_edit(query.message, "Device revoked.")
+            else:
+                await self._send_or_edit(query.message, "Device not found or already revoked.")
+            return
+
+        if action == "pair_deny" and len(parts) >= 2:
+            token = ":".join(parts[1:])
+            session = self.video_store.get_pairing_session(token)
+            if session and session["status"] == "pending":
+                # Mark as expired by setting expires_at to now
+                with self.video_store._lock:
+                    self.video_store.conn.execute(
+                        "UPDATE pairing_sessions SET status = 'denied' WHERE token = ?",
+                        (token,),
+                    )
+                    self.video_store.conn.commit()
+                await self._send_or_edit(query.message, "Pairing denied.")
+            else:
+                await self._send_or_edit(query.message, "Session already handled or expired.")
+            return
+
         # Approval/denial actions: action:child_id:video_id
         if len(parts) < 3:
             return
@@ -723,6 +801,8 @@ class TelegramBot:
             "/watch [ChildName] — Watch activity (combined if omitted)\n"
             "/time [ChildName] — View/set time limits\n"
             "/freeday [ChildName] — Grant unlimited watch time today\n\n"
+            "<b>Devices</b>\n"
+            "/devices — List paired devices\n\n"
             "<i>Child name can be omitted if only one child exists.</i>\n"
             "<i>Send a photo with caption \"avatar ChildName\" to set a photo avatar.</i>"
         )
@@ -1979,6 +2059,52 @@ class TelegramBot:
                 f"Free day pass <b>granted</b> for {_esc(cname)} today! No time limits.",
                 parse_mode=ParseMode.HTML,
             )
+
+    async def _cmd_devices(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List paired devices with revoke buttons.
+
+        /devices — show all paired devices
+        """
+        if not await self._check_admin(update):
+            return
+
+        devices = self.video_store.get_paired_devices()
+        if not devices:
+            await update.effective_message.reply_text(
+                "No paired devices.\n\n"
+                "Devices pair automatically when the TV app starts for the first time.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        active = [d for d in devices if d["is_active"]]
+        revoked = [d for d in devices if not d["is_active"]]
+
+        lines = [f"<b>Paired Devices ({len(active)} active)</b>\n"]
+        for d in active:
+            last_seen = d.get("last_seen_at") or "never"
+            lines.append(
+                f"📺 <b>{_esc(d['device_name'])}</b>\n"
+                f"   Paired: {d['paired_at']}\n"
+                f"   Last seen: {last_seen}"
+            )
+
+        if revoked:
+            lines.append(f"\n<i>{len(revoked)} revoked device(s)</i>")
+
+        buttons = []
+        for d in active:
+            buttons.append([InlineKeyboardButton(
+                f"Revoke: {d['device_name']}",
+                callback_data=f"dev_revoke:{d['id']}",
+            )])
+
+        keyboard = InlineKeyboardMarkup(buttons) if buttons else None
+        await update.effective_message.reply_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
 
     async def _cmd_watch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_admin(update):

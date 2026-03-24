@@ -45,6 +45,12 @@ from api.models import (
     ChannelsHomeResponse,
     RecentlyAddedResponse,
     ChannelDetailResponse,
+    PairRequestBody,
+    PairRequestResponse,
+    PairStatusResponse,
+    PairConfirmBody,
+    PairConfirmByPinBody,
+    PairedDeviceResponse,
 )
 from utils import (
     get_today_str,
@@ -71,6 +77,7 @@ notify_callback = None
 notify_channel_callback = None
 notify_time_expired_callback = None
 notify_time_request_callback = None
+notify_pairing_callback = None
 config = None
 
 # Heartbeat dedup: (child_id, video_id) -> monotonic timestamp
@@ -108,10 +115,11 @@ _HLS_SEGMENT_SECONDS = 2  # Short segments for faster initial playback
 
 
 def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None,
-          notify_time_expired_cb=None, notify_time_request_cb=None):
+          notify_time_expired_cb=None, notify_time_request_cb=None,
+          notify_pairing_cb=None):
     """Called by main.py to inject dependencies."""
     global video_store, invidious_client, config, notify_callback, notify_channel_callback
-    global notify_time_expired_callback, notify_time_request_callback
+    global notify_time_expired_callback, notify_time_request_callback, notify_pairing_callback
     video_store = store
     invidious_client = inv_client
     config = cfg
@@ -119,6 +127,9 @@ def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None,
     notify_channel_callback = notify_channel_cb
     notify_time_expired_callback = notify_time_expired_cb
     notify_time_request_callback = notify_time_request_cb
+    notify_pairing_callback = notify_pairing_cb
+    # Reset rate limiter state (important for test isolation)
+    limiter.reset()
 
 
 # ── Profiles ────────────────────────────────────────────────────────
@@ -1409,6 +1420,147 @@ def _cleanup_expired_sessions():
     ]
     for sid in expired:
         _cleanup_hls_session(sid)
+
+
+# ── Pairing ────────────────────────────────────────────────────────
+
+@public_router.post("/pair/request", response_model=PairRequestResponse)
+@limiter.limit("10/minute")
+async def pair_request(request: Request, body: PairRequestBody = None):
+    """Generate a pairing session with token + 6-digit pin.
+
+    No auth required — the TV app calls this before it has credentials.
+    """
+    if body is None:
+        body = PairRequestBody()
+
+    # Clean up expired sessions first
+    video_store.cleanup_expired_pairing_sessions()
+
+    session = video_store.create_pairing_session(device_name=body.device_name)
+
+    # Calculate expires_in seconds
+    from datetime import datetime
+    expires_at = datetime.fromisoformat(session["expires_at"])
+    created_at = datetime.fromisoformat(session["created_at"])
+    expires_in = int((expires_at - created_at).total_seconds())
+
+    # Notify parent via Telegram
+    if notify_pairing_callback:
+        try:
+            await notify_pairing_callback(session)
+        except Exception:
+            logger.warning("Failed to send pairing notification", exc_info=True)
+
+    return PairRequestResponse(
+        token=session["token"],
+        pin=session["pin"],
+        expires_at=session["expires_at"],
+        expires_in=expires_in,
+    )
+
+
+@public_router.get("/pair/status/{token}", response_model=PairStatusResponse)
+async def pair_status(token: str, request: Request):
+    """Poll pairing status. No auth required.
+
+    Returns status: pending, confirmed, or expired.
+    On confirmed, includes the issued api_key and server_url.
+    """
+    session = video_store.get_pairing_session(token)
+    if not session:
+        raise HTTPException(status_code=404, detail="Pairing session not found")
+
+    if session["status"] == "confirmed":
+        server_url = _get_external_base_url(request)
+        return PairStatusResponse(
+            status="confirmed",
+            api_key=session.get("device_api_key"),
+            server_url=server_url,
+        )
+
+    if session["status"] == "denied":
+        return PairStatusResponse(status="denied")
+
+    # Check if expired
+    from datetime import datetime
+    expires_at = datetime.fromisoformat(session["expires_at"])
+    now = datetime.fromisoformat(
+        video_store.conn.execute("SELECT datetime('now')").fetchone()[0]
+    )
+    if now >= expires_at:
+        return PairStatusResponse(status="expired")
+
+    return PairStatusResponse(status="pending")
+
+
+@router.post("/pair/confirm/{token}")
+async def pair_confirm(token: str, body: PairConfirmBody = None):
+    """Admin confirms a pairing request. Requires auth (admin API key).
+
+    Issues a long-lived API key for the device.
+    """
+    if body is None:
+        body = PairConfirmBody()
+
+    device = video_store.confirm_pairing(token, device_name=body.device_name)
+    if not device:
+        session = video_store.get_pairing_session(token)
+        if not session:
+            raise HTTPException(status_code=404, detail="Pairing session not found")
+        if session["status"] == "confirmed":
+            raise HTTPException(status_code=409, detail="Pairing already confirmed")
+        raise HTTPException(status_code=410, detail="Pairing session expired")
+
+    # Store the api_key on the session so pair/status can return it
+    video_store.set_pairing_device_key(token, device["api_key"])
+
+    return {
+        "status": "confirmed",
+        "device_id": device["id"],
+        "device_name": device["device_name"],
+        "api_key": device["api_key"],
+    }
+
+
+@router.post("/pair/confirm-by-pin")
+@limiter.limit("10/minute")
+async def pair_confirm_by_pin(request: Request, body: PairConfirmByPinBody):
+    """Admin confirms pairing by entering the PIN shown on the TV.
+
+    Looks up the pending session by PIN, then confirms it.
+    """
+    session = video_store.get_pairing_session_by_pin(body.pin)
+    if not session:
+        raise HTTPException(status_code=404, detail="No pending pairing session with that PIN")
+
+    device = video_store.confirm_pairing(session["token"], device_name=body.device_name)
+    if not device:
+        raise HTTPException(status_code=410, detail="Pairing session expired")
+
+    video_store.set_pairing_device_key(session["token"], device["api_key"])
+
+    return {
+        "status": "confirmed",
+        "device_id": device["id"],
+        "device_name": device["device_name"],
+        "api_key": device["api_key"],
+    }
+
+
+@router.get("/devices")
+async def list_devices():
+    """List all paired devices."""
+    devices = video_store.get_paired_devices()
+    return {"devices": devices}
+
+
+@router.delete("/devices/{device_id}")
+async def revoke_device(device_id: int):
+    """Revoke a paired device's access."""
+    if not video_store.revoke_device(device_id):
+        raise HTTPException(status_code=404, detail="Device not found or already revoked")
+    return {"status": "revoked", "device_id": device_id}
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

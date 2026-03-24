@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Root view that manages navigation between all screens.
-/// After profile selection, shows a Plex-style sidebar + main content layout.
+/// Shows pairing screen if no credentials exist, then profile picker, then sidebar + content.
 struct ContentView: View {
+    @State private var isPaired: Bool = CredentialStore.isPaired
     @State private var selectedChild: ChildProfile?
     @State private var sidebarSection: SidebarSection = .home
     @State private var pendingVideoId: String?
@@ -17,7 +18,11 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if let child = selectedChild {
+            if !isPaired {
+                PairingView(onPaired: {
+                    isPaired = true
+                })
+            } else if let child = selectedChild {
                 mainAppLayout(child: child)
             } else {
                 ProfilePickerView { profile in
@@ -175,6 +180,11 @@ struct ContentView: View {
                     timeStatus: timeStatus,
                     onSwitchProfile: {
                         selectedChild = nil
+                    },
+                    onUnpair: {
+                        CredentialStore.clear()
+                        selectedChild = nil
+                        isPaired = false
                     }
                 )
             }

@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Profile screen shown from the sidebar — displays child info, time status, and switch profile option.
+/// Profile screen shown from the sidebar — displays child info, time status, and switch/unpair options.
 struct ProfileView: View {
     let child: ChildProfile
     let timeStatus: TimeStatus?
     let onSwitchProfile: () -> Void
+    var onUnpair: (() -> Void)?
 
     var body: some View {
         ScrollView {
@@ -39,6 +40,17 @@ struct ProfileView: View {
                 }
                 .buttonStyle(.bordered)
                 .padding(.top, 20)
+
+                // Forget server / re-pair
+                if let onUnpair {
+                    Button(role: .destructive, action: onUnpair) {
+                        Label("Forget Server", systemImage: "wifi.slash")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .padding(.top, 8)
+                }
 
                 Spacer()
             }
