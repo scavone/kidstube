@@ -709,6 +709,43 @@ class VideoStore:
             )
             return [dict(row) for row in cursor.fetchall()], total, status_counts
 
+    def get_recently_added_videos(self, child_id: int, limit: int = 20) -> list[dict]:
+        """Get recently approved videos for a child, ordered by approval date desc.
+
+        Returns videos with their metadata, watch position, and category info.
+        """
+        with self._lock:
+            cursor = self.conn.execute(
+                """SELECT v.*, COALESCE(v.category, ch.category, 'fun') as effective_category,
+                          cva.decided_at as access_decided_at,
+                          cva.watch_position, cva.watch_duration, cva.last_watched_at,
+                          cva.watch_status
+                   FROM child_video_access cva
+                   JOIN videos v ON cva.video_id = v.video_id
+                   LEFT JOIN child_channels ch
+                       ON v.channel_name = ch.channel_name COLLATE NOCASE
+                       AND ch.child_id = cva.child_id
+                   WHERE cva.status = 'approved'
+                     AND cva.child_id = ?
+                     AND COALESCE(ch.status, 'allowed') != 'blocked'
+                   ORDER BY cva.decided_at DESC NULLS LAST, cva.ROWID DESC
+                   LIMIT ?""",
+                (child_id, limit),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_channel_video_count(self, child_id: int, channel_id: str) -> int:
+        """Count approved videos for a channel by channel_id for a given child."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) FROM child_video_access cva
+                   JOIN videos v ON cva.video_id = v.video_id
+                   WHERE cva.child_id = ? AND cva.status = 'approved'
+                     AND v.channel_id = ?""",
+                (child_id, channel_id),
+            ).fetchone()
+            return row[0] if row else 0
+
     # ── Watch Position (Resume Playback) ─────────────────────────────
 
     def save_watch_position(self, child_id: int, video_id: str,

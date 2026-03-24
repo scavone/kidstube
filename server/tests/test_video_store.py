@@ -589,6 +589,73 @@ class TestChannelsWithLatestVideo:
         assert result[0]["latest_video"]["video_id"] == "vid_approv1"
 
 
+class TestRecentlyAddedVideos:
+    def test_empty(self, store):
+        child = store.add_child("Alex")
+        result = store.get_recently_added_videos(child["id"])
+        assert result == []
+
+    def test_ordered_by_approval_date(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Ch", "allowed")
+        store.add_video("vid_first123", "First", "Ch")
+        store.request_video(cid, "vid_first123")  # approved first
+        store.add_video("vid_secnd123", "Second", "Ch")
+        store.request_video(cid, "vid_secnd123")  # approved second
+
+        result = store.get_recently_added_videos(cid)
+        assert len(result) == 2
+        # Most recently approved should come first
+        assert result[0]["video_id"] == "vid_secnd123"
+        assert result[1]["video_id"] == "vid_first123"
+
+    def test_only_approved_videos(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_video("vid_apprvd1", "Approved", "Ch")
+        store.add_video("vid_pendng1", "Pending", "Ch")
+        store.request_video(cid, "vid_apprvd1")
+        store.request_video(cid, "vid_pendng1")
+        store.update_video_status(cid, "vid_apprvd1", "approved")
+        # vid_pendng1 stays pending
+
+        result = store.get_recently_added_videos(cid)
+        assert len(result) == 1
+        assert result[0]["video_id"] == "vid_apprvd1"
+
+    def test_respects_limit(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Ch", "allowed")
+        for i in range(5):
+            vid = f"vid_{i:07d}"
+            store.add_video(vid, f"Video {i}", "Ch")
+            store.request_video(cid, vid)
+
+        result = store.get_recently_added_videos(cid, limit=3)
+        assert len(result) == 3
+
+
+class TestChannelVideoCount:
+    def test_count(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_video("vid_a_12345", "A", "Ch", channel_id="UCtest1234567890123456")
+        store.add_video("vid_b_12345", "B", "Ch", channel_id="UCtest1234567890123456")
+        store.add_video("vid_c_12345", "C", "Other", channel_id="UCothr1234567890123456")
+        store.request_video(cid, "vid_a_12345")
+        store.request_video(cid, "vid_b_12345")
+        store.request_video(cid, "vid_c_12345")
+        store.update_video_status(cid, "vid_a_12345", "approved")
+        store.update_video_status(cid, "vid_b_12345", "approved")
+        store.update_video_status(cid, "vid_c_12345", "approved")
+
+        assert store.get_channel_video_count(cid, "UCtest1234567890123456") == 2
+        assert store.get_channel_video_count(cid, "UCothr1234567890123456") == 1
+        assert store.get_channel_video_count(cid, "UCnone1234567890123456") == 0
+
+
 class TestWordFilters:
     def test_add_and_get(self, store):
         assert store.add_word_filter("badword")

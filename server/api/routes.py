@@ -43,6 +43,8 @@ from api.models import (
     TimeRequestStatusResponse,
     ChannelHomeItem,
     ChannelsHomeResponse,
+    RecentlyAddedResponse,
+    ChannelDetailResponse,
 )
 from utils import (
     get_today_str,
@@ -662,6 +664,25 @@ async def get_catalog(
     }
 
 
+# ── Recently Added ──────────────────────────────────────────────────
+
+@router.get("/recently-added")
+async def get_recently_added(
+    child_id: int = Query(..., gt=0),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Return recently approved videos for a child, ordered by approval date.
+
+    Powers the 'Recently Added' row on the tvOS home screen.
+    """
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    videos = video_store.get_recently_added_videos(child_id, limit=limit)
+    return RecentlyAddedResponse(videos=videos)
+
+
 # ── Channels ────────────────────────────────────────────────────────
 
 @router.get("/channels")
@@ -757,6 +778,76 @@ async def get_channel_videos(
         v["access_status"] = status
 
     return {"videos": videos, "channel_id": channel_id}
+
+
+# ── Channel Detail ─────────────────────────────────────────────────
+
+@router.get("/channels/{channel_id}")
+async def get_channel_detail(
+    channel_id: str,
+    child_id: int = Query(..., gt=0),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(24, ge=1, le=100),
+):
+    """Return channel metadata with paginated approved videos.
+
+    Fetches banner/avatar from Invidious and combines with the child's
+    approved video library for this channel. Powers the Channel Detail screen.
+    """
+    if not CHANNEL_ID_RE.match(channel_id):
+        raise HTTPException(status_code=400, detail="Invalid channel ID format")
+
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    # Fetch channel metadata from Invidious
+    thumbnail_url = None
+    banner_url = None
+    channel_name = channel_id
+    handle = None
+    try:
+        info = await invidious_client.get_channel_info(channel_id)
+        if info:
+            channel_name = info.get("name") or channel_id
+            handle = info.get("handle")
+            thumbnail_url = info.get("thumbnail_url")
+            banner_url = info.get("banner_url")
+    except Exception:
+        logger.warning("Failed to fetch channel info for %s", channel_id)
+
+    # Get channel's category from the child's channel list
+    channels = video_store.get_channels(child_id, status="allowed")
+    category = None
+    for ch in channels:
+        if ch.get("channel_id") == channel_id:
+            category = ch.get("category")
+            channel_name = ch.get("channel_name") or channel_name
+            handle = ch.get("handle") or handle
+            break
+
+    # Get paginated approved videos for this channel
+    videos, total, _ = video_store.get_approved_videos(
+        child_id,
+        channel=channel_id,
+        offset=offset,
+        limit=limit,
+    )
+
+    video_count = video_store.get_channel_video_count(child_id, channel_id)
+
+    return ChannelDetailResponse(
+        channel_name=channel_name,
+        channel_id=channel_id,
+        handle=handle,
+        category=category,
+        thumbnail_url=thumbnail_url,
+        banner_url=banner_url,
+        video_count=video_count,
+        videos=videos,
+        has_more=offset + limit < total,
+        total=total,
+    )
 
 
 # ── Starter Channels (Onboarding) ──────────────────────────────────

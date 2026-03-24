@@ -80,6 +80,23 @@ final class APIClient: Sendable {
         return response.videos
     }
 
+    /// Fetch channel detail with metadata and paginated approved videos.
+    func getChannelDetail(
+        channelId: String,
+        childId: Int,
+        offset: Int = 0,
+        limit: Int = 24
+    ) async throws -> ChannelDetailResponse {
+        return try await get(
+            "/api/channels/\(channelId)",
+            query: [
+                "child_id": String(childId),
+                "offset": String(offset),
+                "limit": String(limit)
+            ]
+        )
+    }
+
     // MARK: - Video Detail
 
     /// Fetch full video metadata including description.
@@ -173,6 +190,16 @@ final class APIClient: Sendable {
     func getChannels(childId: Int) async throws -> [Channel] {
         let response: ChannelsResponse = try await get("/api/channels", query: ["child_id": String(childId)])
         return response.channels
+    }
+
+    /// Fetch recently added/approved videos for a child.
+    /// Ordered by approval date descending.
+    func getRecentlyAdded(childId: Int, limit: Int = 20) async throws -> [Video] {
+        let response: RecentlyAddedResponse = try await get(
+            "/api/recently-added",
+            query: ["child_id": String(childId), "limit": String(limit)]
+        )
+        return response.videos
     }
 
     /// Fetch channels with their latest video for the home screen.

@@ -737,6 +737,147 @@ class TestChannelsHomeEndpoint:
         assert ch["banner_url"] is None
 
 
+class TestRecentlyAddedEndpoint:
+    """Tests for GET /api/recently-added — recently approved videos."""
+
+    def test_child_not_found(self, client, auth_headers):
+        resp = client.get("/api/recently-added?child_id=999", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_empty(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get("/api/recently-added?child_id=1", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["videos"] == []
+
+    def test_returns_approved_videos(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "TestCh", "allowed")
+        store.add_video("vid_test1234", "Test Video", "TestCh",
+                        thumbnail_url="http://img.jpg", duration=120)
+        store.request_video(cid, "vid_test1234")
+
+        resp = client.get(f"/api/recently-added?child_id={cid}", headers=auth_headers)
+        assert resp.status_code == 200
+        videos = resp.json()["videos"]
+        assert len(videos) == 1
+        assert videos[0]["video_id"] == "vid_test1234"
+
+    def test_respects_limit(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Ch", "allowed")
+        for i in range(5):
+            vid = f"vid_{i:07d}"
+            store.add_video(vid, f"Video {i}", "Ch")
+            store.request_video(cid, vid)
+
+        resp = client.get(f"/api/recently-added?child_id={cid}&limit=2", headers=auth_headers)
+        assert len(resp.json()["videos"]) == 2
+
+
+class TestChannelDetailEndpoint:
+    """Tests for GET /api/channels/{channel_id} — channel detail screen."""
+
+    def test_child_not_found(self, client, auth_headers):
+        resp = client.get(
+            "/api/channels/UCtest123456789012345678?child_id=999",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_channel_id(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get(
+            "/api/channels/invalid?child_id=1",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_returns_channel_with_videos(self, client, auth_headers, store, mock_invidious):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        ch_id = "UCfun1234567890123456789"
+        store.add_channel(cid, "Fun Channel", "allowed",
+                          channel_id=ch_id, category="fun")
+        store.add_video("vid_fun12345", "Fun Video", "Fun Channel",
+                        channel_id=ch_id,
+                        thumbnail_url="http://img.jpg", duration=300)
+        store.request_video(cid, "vid_fun12345")
+
+        mock_info = {
+            "channel_id": ch_id,
+            "name": "Fun Channel",
+            "handle": "@funchannel",
+            "subscriber_count": 1000,
+            "description": "desc",
+            "thumbnail_url": "https://yt.com/avatar.jpg",
+            "banner_url": "https://yt.com/banner.jpg",
+        }
+
+        with patch.object(mock_invidious, "get_channel_info",
+                          new_callable=AsyncMock, return_value=mock_info):
+            resp = client.get(
+                f"/api/channels/{ch_id}?child_id={cid}",
+                headers=auth_headers,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["channel_name"] == "Fun Channel"
+        assert data["channel_id"] == ch_id
+        assert data["thumbnail_url"] == "https://yt.com/avatar.jpg"
+        assert data["banner_url"] == "https://yt.com/banner.jpg"
+        assert data["category"] == "fun"
+        assert data["video_count"] == 1
+        assert data["total"] == 1
+        assert len(data["videos"]) == 1
+        assert data["videos"][0]["video_id"] == "vid_fun12345"
+
+    def test_pagination(self, client, auth_headers, store, mock_invidious):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        ch_id = "UCpag1234567890123456789"
+        store.add_channel(cid, "Ch", "allowed", channel_id=ch_id)
+        for i in range(5):
+            vid = f"vid_p{i:06d}"
+            store.add_video(vid, f"Video {i}", "Ch", channel_id=ch_id)
+            store.request_video(cid, vid)
+
+        with patch.object(mock_invidious, "get_channel_info",
+                          new_callable=AsyncMock, return_value=None):
+            resp = client.get(
+                f"/api/channels/{ch_id}?child_id={cid}&limit=2&offset=0",
+                headers=auth_headers,
+            )
+
+        data = resp.json()
+        assert len(data["videos"]) == 2
+        assert data["has_more"] is True
+        assert data["total"] == 5
+        assert data["video_count"] == 5
+
+    def test_invidious_failure_graceful(self, client, auth_headers, store, mock_invidious):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        ch_id = "UCtst1234567890123456789"
+        store.add_channel(cid, "TestCh", "allowed", channel_id=ch_id)
+
+        with patch.object(mock_invidious, "get_channel_info",
+                          new_callable=AsyncMock, side_effect=Exception("timeout")):
+            resp = client.get(
+                f"/api/channels/{ch_id}?child_id={cid}",
+                headers=auth_headers,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["channel_name"] == "TestCh"
+        assert data["thumbnail_url"] is None
+        assert data["banner_url"] is None
+
+
 class TestFamilyFriendlyFilter:
     """Tests for filtering isFamilyFriendly=false from search results (#17)."""
 

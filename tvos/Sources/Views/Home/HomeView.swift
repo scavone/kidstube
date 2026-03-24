@@ -52,9 +52,6 @@ struct HomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top bar: child name + time badge + switch profile
-            topBar
-
             // Schedule countdown banner
             if let schedule = viewModel.scheduleStatus,
                schedule.minutesRemaining >= 0,
@@ -97,10 +94,15 @@ struct HomeView: View {
                         )
                         .padding(.bottom, 4)
 
+                        // Recently Added row
+                        if !viewModel.recentlyAdded.isEmpty {
+                            recentlyAddedRow
+                        }
+
                         // Divider between hero section and catalog
-                        if !viewModel.homeChannels.isEmpty {
+                        if !viewModel.homeChannels.isEmpty || !viewModel.recentlyAdded.isEmpty {
                             Rectangle()
-                                .fill(Color.gray.opacity(0.15))
+                                .fill(AppTheme.border)
                                 .frame(height: 1)
                                 .padding(.horizontal, 60)
                         }
@@ -211,30 +213,35 @@ struct HomeView: View {
         onVideoSelected(video)
     }
 
-    // MARK: - Top Bar
+    // MARK: - Recently Added Row
 
-    private var topBar: some View {
-        HStack {
-            HStack(spacing: 10) {
-                Text(child.avatar)
-                    .font(.title3)
-                Text(child.name)
-                    .font(.headline)
+    private var recentlyAddedRow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppTheme.sectionHeader("Recently Added")
+                .padding(.horizontal, 60)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(viewModel.recentlyAdded) { video in
+                        VideoCard(
+                            title: video.title,
+                            channelName: video.channelName,
+                            thumbnailUrl: video.thumbnailUrl,
+                            duration: video.formattedDuration,
+                            tracksFocus: true,
+                            progress: video.watchProgress,
+                            isWatched: video.isWatched
+                        )
+                        .onTapGesture {
+                            selectVideo(video)
+                        }
+                    }
+                }
+                .padding(.horizontal, 60)
+                .padding(.vertical, 8)
             }
-
-            Spacer()
-
-            TimeBadge(timeStatus: viewModel.timeStatus, style: .compact)
-
-            Button(action: onSwitchProfile) {
-                Label("Switch", systemImage: "person.2")
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
+            .focusSection()
         }
-        .padding(.horizontal, 60)
-        .padding(.top, 20)
-        .padding(.bottom, 10)
     }
 
     // MARK: - Search
@@ -645,6 +652,7 @@ struct AlphabetRailView: View {
 @MainActor
 final class HomeViewModel: ObservableObject {
     @Published var videos: [Video] = []
+    @Published var recentlyAdded: [Video] = []
     @Published var homeChannels: [HomeChannel] = []
     @Published var focusedChannel: HomeChannel?
     @Published var selectedChannelFilter: String?
@@ -672,8 +680,17 @@ final class HomeViewModel: ObservableObject {
         async let timeTask: () = refreshTimeStatus(childId: childId)
         async let scheduleTask: () = refreshScheduleStatus(childId: childId)
         async let channelsTask: () = loadHomeChannels(childId: childId)
-        _ = await (catalogTask, timeTask, scheduleTask, channelsTask)
+        async let recentTask: () = loadRecentlyAdded(childId: childId)
+        _ = await (catalogTask, timeTask, scheduleTask, channelsTask, recentTask)
         startScheduleRefresh(childId: childId)
+    }
+
+    func loadRecentlyAdded(childId: Int) async {
+        do {
+            recentlyAdded = try await apiClient.getRecentlyAdded(childId: childId)
+        } catch {
+            // Non-critical — recently added row just won't show
+        }
     }
 
     func loadHomeChannels(childId: Int) async {

@@ -159,3 +159,24 @@ class ChannelHomeItem(BaseModel):
 
 class ChannelsHomeResponse(BaseModel):
     channels: list[ChannelHomeItem]
+
+
+# ── Recently Added ───────────────────────────────────────────────
+
+class RecentlyAddedResponse(BaseModel):
+    videos: list[dict]
+
+
+# ── Channel Detail ───────────────────────────────────────────────
+
+class ChannelDetailResponse(BaseModel):
+    channel_name: str
+    channel_id: str
+    handle: Optional[str] = None
+    category: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    video_count: int = 0
+    videos: list[dict]
+    has_more: bool
+    total: int

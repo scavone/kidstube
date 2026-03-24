@@ -312,6 +312,8 @@ All `/api/*` endpoints require `Authorization: Bearer <BRG_API_KEY>` except avat
 | `/api/catalog` | GET | Paginated approved video library |
 | `/api/channels` | GET | List allowed channels |
 | `/api/channels-home` | GET | Channels with latest video + banner/thumbnail (home screen) |
+| `/api/channels/{channel_id}` | GET | Channel detail with paginated approved videos |
+| `/api/recently-added` | GET | Recently approved videos (params: `child_id`, `limit`) |
 | `/api/onboarding/starter-channels` | GET | Get curated starter channels |
 | `/api/onboarding/import` | POST | Import starter channels for a child |
 | `/api/watch-heartbeat` | POST | Report playback progress |

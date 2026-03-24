@@ -1,159 +1,34 @@
 import SwiftUI
 
 /// Root view that manages navigation between all screens.
-/// Uses a state-machine approach for clear, predictable screen flow.
+/// After profile selection, shows a Plex-style sidebar + main content layout.
 struct ContentView: View {
-    @State private var screen: AppScreen = .profilePicker
     @State private var selectedChild: ChildProfile?
+    @State private var sidebarSection: SidebarSection = .home
     @State private var pendingVideoId: String?
     @State private var pendingVideoTitle: String?
     @State private var pendingChannelName: String?
     @State private var scheduleUnlockTime: String = ""
     @State private var playerItem: PlayerItem?
     @State private var catalogRefreshTrigger = 0
+    @State private var overlayScreen: OverlayScreen?
+    @State private var timeStatus: TimeStatus?
+    @State private var browsingChannel: ChannelSearchResult?
 
     var body: some View {
-        ZStack {
-            Group {
-                switch screen {
-                case .profilePicker:
-                    ProfilePickerView { profile in
-                        selectedChild = profile
-                        screen = .home
-                    }
-
-                case .home:
-                    if let child = selectedChild {
-                        HomeView(
-                            child: child,
-                            refreshTrigger: catalogRefreshTrigger,
-                            onVideoSelected: { video in
-                                playVideo(video)
-                            },
-                            onSearchSubmitted: { query in
-                                screen = .search(query: query)
-                            },
-                            onSwitchProfile: {
-                                selectedChild = nil
-                                screen = .profilePicker
-                            },
-                            onOutsideSchedule: { unlockTime in
-                                scheduleUnlockTime = unlockTime
-                                screen = .outsideSchedule
-                            }
-                        )
-                    }
-
-                case .search(let query):
-                    if let child = selectedChild {
-                        SearchResultsView(
-                            query: query,
-                            child: child,
-                            onWatch: { videoId in
-                                playVideoById(videoId: videoId, title: query)
-                            },
-                            onRequest: { result in
-                                requestVideo(result)
-                            },
-                            onBrowseChannel: { channel in
-                                screen = .channelDetail(channel: channel)
-                            },
-                            onRequestChannel: { channel in
-                                requestChannel(channel)
-                            },
-                            onBack: { screen = .home }
-                        )
-                    }
-
-                case .channelDetail(let channel):
-                    if let child = selectedChild {
-                        ChannelDetailView(
-                            channel: channel,
-                            child: child,
-                            onWatch: { videoId in
-                                playVideoById(videoId: videoId, title: channel.name)
-                            },
-                            onRequest: { result in
-                                requestVideo(result)
-                            },
-                            onBack: { screen = .home }
-                        )
-                    }
-
-                case .pending:
-                    if let child = selectedChild,
-                       let videoId = pendingVideoId,
-                       let title = pendingVideoTitle {
-                        PendingView(
-                            videoId: videoId,
-                            videoTitle: title,
-                            child: child,
-                            onApproved: { approvedId in
-                                playVideoById(videoId: approvedId, title: title)
-                            },
-                            onDenied: {
-                                screen = .denied
-                            },
-                            onCancel: { screen = .home }
-                        )
-                    }
-
-                case .channelPending(let channel):
-                    if let child = selectedChild {
-                        ChannelPendingView(
-                            channelId: channel.channelId,
-                            channelName: channel.name,
-                            child: child,
-                            onApproved: {
-                                catalogRefreshTrigger += 1
-                                screen = .home
-                            },
-                            onDenied: {
-                                pendingChannelName = channel.name
-                                screen = .denied
-                            },
-                            onCancel: { screen = .home }
-                        )
-                    }
-
-                case .denied:
-                    DeniedView(
-                        videoTitle: pendingChannelName ?? pendingVideoTitle ?? "this video",
-                        onBack: {
-                            pendingChannelName = nil
-                            screen = .home
-                        }
-                    )
-
-                case .timesUp:
-                    if let child = selectedChild {
-                        TimesUpView(
-                            childName: child.name,
-                            childId: child.id,
-                            onBack: { screen = .home },
-                            onTimeGranted: { screen = .home }
-                        )
-                    } else {
-                        TimesUpView(
-                            childName: "",
-                            childId: 0,
-                            onBack: { screen = .home },
-                            onTimeGranted: { screen = .home }
-                        )
-                    }
-
-                case .outsideSchedule:
-                    OutsideScheduleView(
-                        unlockTime: scheduleUnlockTime,
-                        onBack: {
-                            // Return to profile picker so another child can watch
-                            selectedChild = nil
-                            screen = .profilePicker
-                        }
-                    )
+        Group {
+            if let child = selectedChild {
+                mainAppLayout(child: child)
+            } else {
+                ProfilePickerView { profile in
+                    selectedChild = profile
                 }
             }
-            .animation(.easeInOut(duration: 0.25), value: screen)
+        }
+        .onChange(of: selectedChild?.id) {
+            // Reset to Home tab when switching profiles
+            sidebarSection = .home
+            browsingChannel = nil
         }
         .fullScreenCover(item: $playerItem, onDismiss: {
             catalogRefreshTrigger += 1
@@ -163,12 +38,12 @@ struct ContentView: View {
                 child: item.child,
                 onTimesUp: {
                     playerItem = nil
-                    screen = .timesUp
+                    overlayScreen = .timesUp
                 },
                 onOutsideSchedule: {
                     playerItem = nil
                     scheduleUnlockTime = ""
-                    screen = .outsideSchedule
+                    overlayScreen = .outsideSchedule
                 },
                 onDismiss: {
                     playerItem = nil
@@ -177,27 +52,229 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Main App Layout (Sidebar + Content)
+
+    @ViewBuilder
+    private func mainAppLayout(child: ChildProfile) -> some View {
+        ZStack {
+            HStack(spacing: 0) {
+                // Sidebar
+                SidebarView(
+                    selection: $sidebarSection,
+                    child: child,
+                    timeStatus: timeStatus
+                )
+                .frame(width: AppTheme.sidebarWidth)
+
+                // Main content
+                ZStack {
+                    AppTheme.background.ignoresSafeArea()
+                    detailContent(child: child)
+                }
+                .focusSection()
+            }
+            .disabled(overlayScreen != nil)
+            .blur(radius: overlayScreen != nil ? 5 : 0)
+
+            // Overlay screens (pending, denied, timesUp, outsideSchedule)
+            if let overlay = overlayScreen {
+                overlayView(overlay, child: child)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: overlayScreen)
+        .task {
+            await refreshTimeStatus(childId: child.id)
+        }
+        .onChange(of: catalogRefreshTrigger) {
+            Task { await refreshTimeStatus(childId: child.id) }
+        }
+    }
+
+    // MARK: - Detail Content
+
+    @ViewBuilder
+    private func detailContent(child: ChildProfile) -> some View {
+        // Channel detail takes precedence when browsing
+        if let channel = browsingChannel {
+            ChannelDetailView(
+                channel: channel,
+                child: child,
+                onWatch: { videoId in
+                    playVideoById(videoId: videoId, title: channel.name)
+                },
+                onRequest: { result in
+                    requestVideo(result)
+                },
+                onBack: { browsingChannel = nil }
+            )
+        } else {
+            switch sidebarSection {
+            case .home:
+                HomeView(
+                    child: child,
+                    refreshTrigger: catalogRefreshTrigger,
+                    onVideoSelected: { video in
+                        playVideo(video)
+                    },
+                    onSearchSubmitted: { _ in
+                        sidebarSection = .search
+                    },
+                    onSwitchProfile: {
+                        selectedChild = nil
+                    },
+                    onOutsideSchedule: { unlockTime in
+                        scheduleUnlockTime = unlockTime
+                        overlayScreen = .outsideSchedule
+                    }
+                )
+
+            case .channels:
+                ChannelsListView(
+                    child: child,
+                    onChannelSelected: { homeChannel in
+                        // Convert HomeChannel to ChannelSearchResult for detail view
+                        let channel = ChannelSearchResult(
+                            channelId: homeChannel.channelId ?? homeChannel.channelName,
+                            name: homeChannel.channelName,
+                            thumbnailUrl: homeChannel.thumbnailUrl
+                        )
+                        browsingChannel = channel
+                    }
+                )
+
+            case .category(let category):
+                CategoryContentView(
+                    child: child,
+                    category: category,
+                    onVideoSelected: { video in
+                        playVideo(video)
+                    }
+                )
+
+            case .search:
+                SidebarSearchView(
+                    child: child,
+                    onWatch: { videoId in
+                        playVideoById(videoId: videoId, title: "")
+                    },
+                    onRequest: { result in
+                        requestVideo(result)
+                    },
+                    onBrowseChannel: { channel in
+                        browsingChannel = channel
+                    },
+                    onRequestChannel: { channel in
+                        requestChannel(channel)
+                    }
+                )
+
+            case .profile:
+                ProfileView(
+                    child: child,
+                    timeStatus: timeStatus,
+                    onSwitchProfile: {
+                        selectedChild = nil
+                    }
+                )
+            }
+        }
+    }
+
+    // MARK: - Overlay Screens
+
+    @ViewBuilder
+    private func overlayView(_ screen: OverlayScreen, child: ChildProfile) -> some View {
+        switch screen {
+        case .pending:
+            if let videoId = pendingVideoId,
+               let title = pendingVideoTitle {
+                PendingView(
+                    videoId: videoId,
+                    videoTitle: title,
+                    child: child,
+                    onApproved: { approvedId in
+                        overlayScreen = nil
+                        playVideoById(videoId: approvedId, title: title)
+                    },
+                    onDenied: {
+                        overlayScreen = .denied
+                    },
+                    onCancel: { overlayScreen = nil }
+                )
+            }
+
+        case .channelPending(let channel):
+            ChannelPendingView(
+                channelId: channel.channelId,
+                channelName: channel.name,
+                child: child,
+                onApproved: {
+                    catalogRefreshTrigger += 1
+                    overlayScreen = nil
+                },
+                onDenied: {
+                    pendingChannelName = channel.name
+                    overlayScreen = .denied
+                },
+                onCancel: { overlayScreen = nil }
+            )
+
+        case .denied:
+            DeniedView(
+                videoTitle: pendingChannelName ?? pendingVideoTitle ?? "this video",
+                onBack: {
+                    pendingChannelName = nil
+                    overlayScreen = nil
+                }
+            )
+
+        case .timesUp:
+            TimesUpView(
+                childName: child.name,
+                childId: child.id,
+                onBack: { overlayScreen = nil },
+                onTimeGranted: { overlayScreen = nil }
+            )
+
+        case .outsideSchedule:
+            OutsideScheduleView(
+                unlockTime: scheduleUnlockTime,
+                onBack: {
+                    overlayScreen = nil
+                    selectedChild = nil
+                }
+            )
+        }
+    }
+
     // MARK: - Navigation Helpers
+
+    private func refreshTimeStatus(childId: Int) async {
+        do {
+            timeStatus = try await APIClient().getTimeStatus(childId: childId)
+        } catch {
+            // Non-critical
+        }
+    }
 
     /// Play a video from the catalog (carries watch position data for resume).
     private func playVideo(_ video: Video) {
         pendingVideoId = video.videoId
         pendingVideoTitle = video.title
         guard let child = selectedChild else { return }
-        // Pre-playback time check — block if exceeded
         Task {
             let apiClient = APIClient()
             do {
                 let status = try await apiClient.getTimeStatus(childId: child.id)
                 await MainActor.run {
                     if status.exceeded {
-                        screen = .timesUp
+                        overlayScreen = .timesUp
                     } else {
                         playerItem = PlayerItem(video: video, child: child)
                     }
                 }
             } catch {
-                // Fail-open on network error
                 await MainActor.run {
                     playerItem = PlayerItem(video: video, child: child)
                 }
@@ -205,7 +282,7 @@ struct ContentView: View {
         }
     }
 
-    /// Play a video by ID only (no watch position data — e.g. from search or pending).
+    /// Play a video by ID only (no watch position data).
     private func playVideoById(videoId: String, title: String) {
         let video = Video(videoId: videoId, title: title, channelName: "")
         playVideo(video)
@@ -214,7 +291,6 @@ struct ContentView: View {
     private func requestVideo(_ result: SearchResult) {
         pendingVideoId = result.videoId
         pendingVideoTitle = result.title
-        // Fire the request then navigate to pending
         Task {
             let apiClient = APIClient()
             guard let child = selectedChild else { return }
@@ -227,14 +303,13 @@ struct ContentView: View {
                     if response.status == "approved" {
                         playVideoById(videoId: result.videoId, title: result.title)
                     } else if response.status == "denied" {
-                        screen = .denied
+                        overlayScreen = .denied
                     } else {
-                        screen = .pending
+                        overlayScreen = .pending
                     }
                 }
             } catch {
-                // If request fails, still go to pending — it might already exist
-                await MainActor.run { screen = .pending }
+                await MainActor.run { overlayScreen = .pending }
             }
         }
     }
@@ -251,16 +326,15 @@ struct ContentView: View {
                 await MainActor.run {
                     if response.status == "approved" {
                         catalogRefreshTrigger += 1
-                        screen = .home
                     } else if response.status == "denied" {
                         pendingChannelName = channel.name
-                        screen = .denied
+                        overlayScreen = .denied
                     } else {
-                        screen = .channelPending(channel: channel)
+                        overlayScreen = .channelPending(channel: channel)
                     }
                 }
             } catch {
-                await MainActor.run { screen = .channelPending(channel: channel) }
+                await MainActor.run { overlayScreen = .channelPending(channel: channel) }
             }
         }
     }
@@ -274,13 +348,10 @@ struct PlayerItem: Identifiable {
     let child: ChildProfile
 }
 
-// MARK: - App Screen State
+// MARK: - Overlay Screen State
 
-enum AppScreen: Equatable {
-    case profilePicker
-    case home
-    case search(query: String)
-    case channelDetail(channel: ChannelSearchResult)
+/// Screens that appear as overlays on top of the sidebar layout.
+enum OverlayScreen: Equatable {
     case pending
     case channelPending(channel: ChannelSearchResult)
     case denied

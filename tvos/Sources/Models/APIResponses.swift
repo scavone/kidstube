@@ -95,6 +95,39 @@ struct ChannelsResponse: Codable {
     let channels: [Channel]
 }
 
+// MARK: - Recently Added
+
+struct RecentlyAddedResponse: Codable {
+    let videos: [Video]
+}
+
+// MARK: - Channel Detail
+
+struct ChannelDetailResponse: Codable {
+    let channelName: String
+    let channelId: String?
+    var handle: String?
+    var category: String?
+    var thumbnailUrl: String?
+    var bannerUrl: String?
+    let videoCount: Int
+    let videos: [Video]
+    let hasMore: Bool
+    let total: Int
+
+    enum CodingKeys: String, CodingKey {
+        case channelName = "channel_name"
+        case channelId = "channel_id"
+        case handle, category
+        case thumbnailUrl = "thumbnail_url"
+        case bannerUrl = "banner_url"
+        case videoCount = "video_count"
+        case videos
+        case hasMore = "has_more"
+        case total
+    }
+}
+
 // MARK: - Channel Videos
 
 struct ChannelVideosResponse: Codable {
