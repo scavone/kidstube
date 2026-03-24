@@ -112,6 +112,7 @@ class TelegramBot:
             CommandHandler("freeday", self._cmd_freeday),
             CommandHandler("devices", self._cmd_devices),
             CommandHandler("pin", self._cmd_pin),
+            CommandHandler("setup", self._cmd_setup),
             MessageHandler(filters.PHOTO & ~filters.COMMAND, self._handle_photo),
             CallbackQueryHandler(self._handle_callback),
         ]
@@ -409,6 +410,11 @@ class TelegramBot:
         parts = data.split(":")
 
         action = parts[0]
+
+        # Setup wizard callbacks
+        if action.startswith("setup_"):
+            if await self._handle_setup_callback(query, action, parts):
+                return
 
         # Pagination callbacks (no child/video context)
         if action == "pending_page" and len(parts) >= 2:
@@ -775,7 +781,7 @@ class TelegramBot:
             await update.effective_message.reply_text(
                 f"Welcome to <b>{_esc(app_name)}</b>!\n\n"
                 "You don't have any child profiles yet. "
-                "Get started by creating one:\n\n"
+                "Run /setup for a guided walkthrough, or create a profile manually:\n\n"
                 "/addkid Name [Avatar]\n\n"
                 "Example: /addkid Alex or /addkid Sam 👧",
                 parse_mode=ParseMode.HTML,
@@ -808,6 +814,8 @@ class TelegramBot:
             "/pin [ChildName] disable — Remove PIN\n\n"
             "<b>Devices</b>\n"
             "/devices — List paired devices\n\n"
+            "<b>Setup</b>\n"
+            "/setup — Guided setup wizard\n\n"
             "<i>Child name can be omitted if only one child exists.</i>\n"
             "<i>Send a photo with caption \"avatar ChildName\" to set a photo avatar.</i>"
         )
@@ -1003,19 +1011,70 @@ class TelegramBot:
                 )
             return
 
+        # /child pin <name> [pin|off]
+        if subcmd == "pin":
+            if len(args) < 2:
+                await update.effective_message.reply_text(
+                    "Usage: /child pin ChildName 1234 — Set PIN\n"
+                    "/child pin ChildName off — Disable PIN"
+                )
+                return
+            name = args[1]
+            child = self.video_store.get_child_by_name(name)
+            if not child:
+                await update.effective_message.reply_text(f"Child '{name}' not found.")
+                return
+            cname = child["name"]
+            cid = child["id"]
+            if len(args) < 3:
+                has_pin = self.video_store.has_child_pin(cid)
+                status = "enabled ✅" if has_pin else "not set"
+                await update.effective_message.reply_text(
+                    f"<b>{_esc(cname)}</b> — PIN {status}\n\n"
+                    f"/child pin {_esc(cname)} XXXX — Set PIN\n"
+                    f"/child pin {_esc(cname)} off — Disable PIN",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            pin_value = args[2]
+            if pin_value.lower() == "off":
+                if self.video_store.delete_child_pin(cid):
+                    await update.effective_message.reply_text(
+                        f"PIN removed for <b>{_esc(cname)}</b>.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                else:
+                    await update.effective_message.reply_text(
+                        f"<b>{_esc(cname)}</b> doesn't have a PIN set.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                return
+            if not pin_value.isdigit() or not (4 <= len(pin_value) <= 6):
+                await update.effective_message.reply_text("PIN must be 4–6 digits.")
+                return
+            self.video_store.set_child_pin(cid, pin_value)
+            await update.effective_message.reply_text(
+                f"PIN set for <b>{_esc(cname)}</b>. "
+                f"They'll need to enter it when selecting their profile on the TV.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
         # /child <Name> — show single child summary
         child = self.video_store.get_child_by_name(args[0])
         if not child:
             await update.effective_message.reply_text(
                 f"Child '{args[0]}' not found.\n\n"
                 "Usage:\n"
-                "/child \u2014 List all profiles\n"
+                "/child — List all profiles\n"
                 "/child add Name [Avatar]\n"
                 "/child remove Name\n"
                 "/child rename OldName NewName\n"
-                "/child familysafe Name on|off \u2014 Toggle safe filter\n"
-                "/child language Name code \u2014 Set audio language\n"
-                "/child ChildName \u2014 Show profile summary"
+                "/child pin Name 1234 — Set PIN\n"
+                "/child pin Name off — Disable PIN\n"
+                "/child familysafe Name on|off — Toggle safe filter\n"
+                "/child language Name code — Set audio language\n"
+                "/child ChildName — Show profile summary"
             )
             return
 
@@ -1044,12 +1103,16 @@ class TelegramBot:
         family_safe = self.video_store.get_child_setting(cid, "family_safe_filter", "on")
         family_safe_display = "on" if family_safe != "off" else "off"
 
+        has_pin = self.video_store.has_child_pin(cid)
+        pin_display = "set ✅" if has_pin else "not set"
+
         lines = [
             f"{child.get('avatar', '')} <b>{_esc(child['name'])}</b>\n",
             f"<b>Time Today:</b> {used:.0f}/{limit} min {bar}",
             f"Remaining: {remaining:.0f} min\n",
             f"<b>Videos:</b> {stats['approved']} approved, {stats['pending']} pending, {stats['denied']} denied",
             f"<b>Channels:</b> {len(channels)} allowed",
+            f"<b>PIN:</b> {pin_display}",
             f"<b>Language:</b> {_esc(lang_display)}",
             f"<b>Family Safe Filter:</b> {family_safe_display}",
         ]
@@ -2211,6 +2274,125 @@ class TelegramBot:
             f"/pin {_esc(cname)} disable — Remove PIN",
             parse_mode=ParseMode.HTML,
         )
+
+    async def _cmd_setup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Guided setup wizard using inline keyboard buttons.
+
+        Steps:
+        1. Create first child profile
+        2. Browse/import starter channels
+        3. Set time limits
+        4. Configure word filters
+        """
+        if not await self._check_admin(update):
+            return
+
+        children = self._all_children()
+        if children:
+            # Already have children — show setup menu to adjust settings
+            child = children[0]
+            cname = child["name"]
+            cid = child["id"]
+            buttons = [
+                [InlineKeyboardButton("Add another child", callback_data="setup_add_child")],
+                [InlineKeyboardButton(f"Browse starter channels for {cname}", callback_data=f"starter_page:{cid}:0")],
+                [InlineKeyboardButton(f"Set time limits for {cname}", callback_data=f"setup_time:{cid}")],
+                [InlineKeyboardButton("Configure word filters", callback_data="setup_filters")],
+            ]
+            await update.effective_message.reply_text(
+                "<b>Setup</b>\n\n"
+                f"You have {len(children)} child profile(s). "
+                "Pick a step to adjust:",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+        else:
+            # No children — start with step 1
+            await update.effective_message.reply_text(
+                "<b>Welcome! Let's get set up.</b>\n\n"
+                "<b>Step 1:</b> Create your first child profile.\n\n"
+                "Send: /child add <i>Name</i> [Avatar]\n\n"
+                "Example: <code>/child add Alex</code> or <code>/child add Sam 👧</code>\n\n"
+                "Once you've created a profile, run /setup again to continue.",
+                parse_mode=ParseMode.HTML,
+            )
+
+    async def _handle_setup_callback(self, query, action: str, parts: list[str]):
+        """Handle setup wizard inline button callbacks."""
+        if action == "setup_add_child":
+            await self._send_or_edit(
+                query.message,
+                "<b>Add a child profile</b>\n\n"
+                "Send: /child add <i>Name</i> [Avatar]\n\n"
+                "Example: <code>/child add Alex</code> or <code>/child add Sam 👧</code>\n\n"
+                "Then run /setup again to continue.",
+            )
+            return True
+
+        if action == "setup_time" and len(parts) >= 2:
+            child_id = int(parts[1])
+            child = self.video_store.get_child(child_id)
+            if not child:
+                await self._send_or_edit(query.message, "Child not found.")
+                return True
+            cname = child["name"]
+            limit_str = self.video_store.get_child_setting(child_id, "daily_limit_minutes", "")
+            current = limit_str if limit_str else str(self.config.watch_limits.daily_limit_minutes)
+            buttons = [
+                [
+                    InlineKeyboardButton("30 min", callback_data=f"setup_settime:{child_id}:30"),
+                    InlineKeyboardButton("60 min", callback_data=f"setup_settime:{child_id}:60"),
+                    InlineKeyboardButton("90 min", callback_data=f"setup_settime:{child_id}:90"),
+                ],
+                [
+                    InlineKeyboardButton("120 min", callback_data=f"setup_settime:{child_id}:120"),
+                    InlineKeyboardButton("No limit", callback_data=f"setup_settime:{child_id}:0"),
+                ],
+            ]
+            await self._send_or_edit(
+                query.message,
+                f"<b>Time Limits for {_esc(cname)}</b>\n\n"
+                f"Current daily limit: <b>{current} min</b>\n\n"
+                "Choose a daily screen time limit:",
+                keyboard=InlineKeyboardMarkup(buttons),
+            )
+            return True
+
+        if action == "setup_settime" and len(parts) >= 3:
+            child_id = int(parts[1])
+            minutes = int(parts[2])
+            child = self.video_store.get_child(child_id)
+            if not child:
+                await self._send_or_edit(query.message, "Child not found.")
+                return True
+            cname = child["name"]
+            self.video_store.set_child_setting(child_id, "daily_limit_minutes", str(minutes))
+            if minutes == 0:
+                msg = f"Daily limit <b>disabled</b> for <b>{_esc(cname)}</b>."
+            else:
+                msg = f"Daily limit set to <b>{minutes} minutes</b> for <b>{_esc(cname)}</b>."
+            await self._send_or_edit(
+                query.message,
+                f"{msg}\n\nRun /setup to continue with more settings.",
+            )
+            return True
+
+        if action == "setup_filters":
+            filters_list = self.video_store.get_word_filters()
+            if filters_list:
+                words = ", ".join(f"<code>{_esc(w)}</code>" for w in filters_list)
+                text = f"<b>Word Filters</b>\n\nCurrent filters: {words}\n\n"
+            else:
+                text = "<b>Word Filters</b>\n\nNo word filters set.\n\n"
+            text += (
+                "Add a filter: /search add <i>word</i>\n"
+                "Remove a filter: /search remove <i>word</i>\n\n"
+                "Run /setup to return to the setup menu."
+            )
+            await self._send_or_edit(query.message, text)
+            return True
+
+        return False
 
     async def _cmd_watch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_admin(update):

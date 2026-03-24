@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// "Who's watching?" profile selection screen shown at launch.
+/// Auto-selects when only one child profile exists.
 struct ProfilePickerView: View {
     @StateObject private var viewModel = ProfilePickerViewModel()
+    var suppressAutoSelect: Bool = false
     let onProfileSelected: (ChildProfile) -> Void
 
     private let columns = [
@@ -23,7 +25,10 @@ struct ProfilePickerView: View {
             } else {
                 LazyVGrid(columns: columns, spacing: 40) {
                     ForEach(viewModel.profiles) { profile in
-                        ProfileCardView(profile: profile) {
+                        ProfileCardView(
+                            profile: profile,
+                            subtitle: profile.subtitle
+                        ) {
                             onProfileSelected(profile)
                         }
                     }
@@ -46,6 +51,10 @@ struct ProfilePickerView: View {
         .padding(60)
         .task {
             await viewModel.loadProfiles()
+            // Auto-skip when only one child exists (unless suppressed after PIN cancel)
+            if viewModel.profiles.count == 1 && !suppressAutoSelect {
+                onProfileSelected(viewModel.profiles[0])
+            }
         }
     }
 
@@ -69,6 +78,7 @@ struct ProfilePickerView: View {
 /// Individual profile card with avatar and name.
 struct ProfileCardView: View {
     let profile: ChildProfile
+    let subtitle: String?
     let onSelect: () -> Void
 
     @FocusState private var isFocused: Bool
@@ -84,10 +94,19 @@ struct ProfileCardView: View {
                             .fill(Color.accentColor.opacity(isFocused ? 0.4 : 0.2))
                     )
 
-                Text(profile.name)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
+                VStack(spacing: 6) {
+                    Text(profile.name)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundColor(AppTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
             }
             .padding(20)
             .scaleEffect(isFocused ? 1.1 : 1.0)

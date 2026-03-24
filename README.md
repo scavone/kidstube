@@ -236,6 +236,8 @@ Once running, message your bot on Telegram. Commands:
 | `/child remove Name` | Delete a profile |
 | `/child rename Old New` | Rename a profile |
 | `/child Name` | Show single profile details |
+| `/child pin Name XXXX` | Set or change PIN (4–6 digits) |
+| `/child pin Name off` | Disable PIN |
 
 **Content**
 
@@ -269,6 +271,12 @@ Once running, message your bot on Telegram. Commands:
 | Command | Description |
 |---|---|
 | `/devices` | List paired devices with option to revoke |
+
+**Setup**
+
+| Command | Description |
+|---|---|
+| `/setup` | Guided setup wizard (create profile, starter channels, time limits, word filters) |
 
 Child name can be omitted when only one child exists.
 

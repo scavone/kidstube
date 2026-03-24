@@ -141,7 +141,25 @@ def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None,
 @router.get("/profiles")
 async def list_profiles():
     children = video_store.get_children()
-    return {"profiles": children}
+    tz = config.watch_limits.timezone
+    today = get_today_str(tz)
+    bounds = get_day_utc_bounds(today, tz)
+
+    profiles = []
+    for child in children:
+        cid = child["id"]
+        stats = video_store.get_stats(child_id=cid)
+        remaining_sec = _get_remaining_seconds(cid)
+        free_day = video_store.get_child_setting(cid, "free_day_date", "")
+        pin_enabled = video_store.has_child_pin(cid)
+        profiles.append({
+            **child,
+            "video_count": stats["approved"],
+            "time_remaining_sec": remaining_sec,
+            "free_day": free_day == today,
+            "pin_enabled": pin_enabled,
+        })
+    return {"profiles": profiles}
 
 
 @router.post("/profiles")

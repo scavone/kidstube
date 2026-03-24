@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var timeStatus: TimeStatus?
     @State private var browsingChannel: ChannelSearchResult?
     @State private var pinGateState: PinGateState = .authenticated
+    @State private var suppressAutoSelect = false
 
     var body: some View {
         Group {
@@ -31,9 +32,11 @@ struct ContentView: View {
                     PinEntryView(
                         child: child,
                         onSuccess: {
+                            suppressAutoSelect = false
                             pinGateState = .authenticated
                         },
                         onCancel: {
+                            suppressAutoSelect = true
                             selectedChild = nil
                         }
                     )
@@ -41,7 +44,9 @@ struct ContentView: View {
                     mainAppLayout(child: child)
                 }
             } else {
-                ProfilePickerView { profile in
+                ProfilePickerView(
+                    suppressAutoSelect: suppressAutoSelect
+                ) { profile in
                     selectedChild = profile
                 }
             }
@@ -310,6 +315,13 @@ struct ContentView: View {
             return
         }
 
+        // Use inline pin_enabled from profiles endpoint if available
+        if let pinEnabled = child.pinEnabled {
+            pinGateState = pinEnabled ? .pinRequired : .authenticated
+            return
+        }
+
+        // Fallback: fetch from dedicated endpoint
         pinGateState = .checking
         Task {
             let apiClient = APIClient()

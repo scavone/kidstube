@@ -121,6 +121,35 @@ class TestProfilesEndpoint:
         resp = client.get("/api/profiles", headers=auth_headers)
         assert len(resp.json()["profiles"]) == 2
 
+    def test_list_includes_subtitle_data(self, client, auth_headers, store):
+        """Profiles response includes video_count, time_remaining_sec, free_day, pin_enabled."""
+        child = store.add_child("Alex")
+        resp = client.get("/api/profiles", headers=auth_headers)
+        profile = resp.json()["profiles"][0]
+        assert "video_count" in profile
+        assert "time_remaining_sec" in profile
+        assert "free_day" in profile
+        assert "pin_enabled" in profile
+        assert profile["video_count"] == 0
+        assert profile["free_day"] is False
+        assert profile["pin_enabled"] is False
+
+    def test_list_shows_pin_enabled(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        resp = client.get("/api/profiles", headers=auth_headers)
+        profile = resp.json()["profiles"][0]
+        assert profile["pin_enabled"] is True
+
+    def test_list_shows_video_count(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.add_video("vid1", "Video 1", "Ch1", channel_id="UC123")
+        store.request_video(child["id"], "vid1")
+        store.update_video_status(child["id"], "vid1", "approved")
+        resp = client.get("/api/profiles", headers=auth_headers)
+        profile = resp.json()["profiles"][0]
+        assert profile["video_count"] == 1
+
 
 class TestUpdateProfileEndpoint:
     def test_update_name(self, client, auth_headers, store):

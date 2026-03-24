@@ -2091,3 +2091,118 @@ class TestTimeCallbacks:
         bot._app.bot.send_message.assert_called_once()
         call_kwargs = bot._app.bot.send_message.call_args[1]
         assert "More time requested" in call_kwargs["text"]
+
+
+class TestChildPinCommand:
+    """Tests for /child pin subcommand."""
+
+    @pytest.mark.asyncio
+    async def test_child_pin_set(self, bot, admin_update, context, store):
+        store.add_child("Alex")
+        context.args = ["pin", "Alex", "1234"]
+        await bot._cmd_child(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        reply.assert_called_once()
+        text = reply.call_args[0][0]
+        assert "PIN set" in text
+        assert store.has_child_pin(store.get_child_by_name("Alex")["id"])
+
+    @pytest.mark.asyncio
+    async def test_child_pin_off(self, bot, admin_update, context, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        context.args = ["pin", "Alex", "off"]
+        await bot._cmd_child(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        text = reply.call_args[0][0]
+        assert "PIN removed" in text
+        assert not store.has_child_pin(child["id"])
+
+    @pytest.mark.asyncio
+    async def test_child_pin_status(self, bot, admin_update, context, store):
+        store.add_child("Alex")
+        context.args = ["pin", "Alex"]
+        await bot._cmd_child(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        text = reply.call_args[0][0]
+        assert "not set" in text
+
+    @pytest.mark.asyncio
+    async def test_child_pin_bad_format(self, bot, admin_update, context, store):
+        store.add_child("Alex")
+        context.args = ["pin", "Alex", "ab"]
+        await bot._cmd_child(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        text = reply.call_args[0][0]
+        assert "4–6 digits" in text
+
+    @pytest.mark.asyncio
+    async def test_child_pin_no_args(self, bot, admin_update, context, store):
+        context.args = ["pin"]
+        await bot._cmd_child(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        text = reply.call_args[0][0]
+        assert "Usage" in text
+
+    @pytest.mark.asyncio
+    async def test_child_pin_child_not_found(self, bot, admin_update, context, store):
+        context.args = ["pin", "Nobody", "1234"]
+        await bot._cmd_child(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        text = reply.call_args[0][0]
+        assert "not found" in text
+
+    @pytest.mark.asyncio
+    async def test_child_summary_shows_pin_status(self, bot, admin_update, context, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        context.args = ["Alex"]
+        await bot._cmd_child(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        text = reply.call_args[0][0]
+        assert "PIN" in text
+        assert "set ✅" in text
+
+
+class TestSetupCommand:
+    """Tests for /setup wizard."""
+
+    @pytest.mark.asyncio
+    async def test_setup_no_children(self, bot, admin_update, context, store):
+        """First run — prompts to create a child profile."""
+        context.args = []
+        await bot._cmd_setup(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        reply.assert_called_once()
+        text = reply.call_args[0][0]
+        assert "Step 1" in text
+        assert "/child add" in text
+
+    @pytest.mark.asyncio
+    async def test_setup_with_children(self, bot, admin_update, context, store):
+        """With existing children — shows setup menu."""
+        store.add_child("Alex")
+        context.args = []
+        await bot._cmd_setup(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        reply.assert_called_once()
+        text = reply.call_args[0][0]
+        assert "Setup" in text
+        assert "1 child profile" in text
+        kwargs = reply.call_args[1]
+        assert kwargs.get("reply_markup") is not None
+
+    @pytest.mark.asyncio
+    async def test_setup_rejected_non_admin(self, bot, non_admin_update, context):
+        context.args = []
+        await bot._cmd_setup(non_admin_update, context)
+        non_admin_update.effective_message.reply_text.assert_called_once_with("Unauthorized.")
+
+    @pytest.mark.asyncio
+    async def test_help_suggests_setup_when_no_children(self, bot, admin_update, context):
+        """First-run /start should suggest /setup."""
+        context.args = []
+        await bot._cmd_help(admin_update, context)
+        reply = admin_update.effective_message.reply_text
+        text = reply.call_args[0][0]
+        assert "/setup" in text
