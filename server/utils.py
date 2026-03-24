@@ -3,6 +3,7 @@
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -271,3 +272,98 @@ def minutes_until_schedule_end(end_str: str, tz_name: str = "") -> int:
         diff += 24 * 60  # crosses midnight
 
     return diff
+
+
+# ── Session Windowing ────────────────────────────────────────────────
+
+def compute_session_state(
+    session_config: dict,
+    watch_entries: list,
+    now: datetime,
+) -> dict:
+    """Compute current session state from watch_log entries.
+
+    Args:
+        session_config: dict with session_duration_minutes, cooldown_duration_minutes,
+                        max_sessions_per_day (None = uncapped)
+        watch_entries: list of (duration_seconds, watched_at_utc_str) sorted ASC
+        now: current UTC datetime (tz-aware)
+
+    Returns a dict matching SessionStatusResponse fields (sessions_enabled=True).
+    """
+    session_dur_sec = session_config["session_duration_minutes"] * 60
+    cooldown_dur_sec = session_config["cooldown_duration_minutes"] * 60
+    max_sessions: Optional[int] = session_config.get("max_sessions_per_day")
+
+    sessions_completed = 0
+    accumulated = 0  # seconds accumulated in current in-progress session
+    in_cooldown = False
+    cooldown_end: Optional[datetime] = None
+
+    for duration_sec, watched_at_str in watch_entries:
+        try:
+            watched_at = datetime.fromisoformat(watched_at_str)
+            if watched_at.tzinfo is None:
+                watched_at = watched_at.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            continue
+
+        if in_cooldown:
+            if cooldown_end and watched_at >= cooldown_end:
+                # Cooldown elapsed — start fresh session
+                in_cooldown = False
+                cooldown_end = None
+                accumulated = 0
+            else:
+                # Still in cooldown — skip this heartbeat
+                continue
+
+        accumulated += duration_sec
+
+        if accumulated >= session_dur_sec:
+            sessions_completed += 1
+            accumulated = 0
+
+            if max_sessions is not None and sessions_completed >= max_sessions:
+                # Sessions exhausted — no more cooldown needed
+                in_cooldown = False
+                break
+
+            cooldown_end = watched_at + timedelta(seconds=cooldown_dur_sec)
+            in_cooldown = True
+
+    # Re-check cooldown against current time
+    if in_cooldown and cooldown_end and now >= cooldown_end:
+        in_cooldown = False
+        cooldown_end = None
+
+    sessions_exhausted = (
+        max_sessions is not None and sessions_completed >= max_sessions
+    )
+    current_session = sessions_completed + 1
+
+    if sessions_exhausted:
+        session_time_remaining_sec = 0
+        cooldown_remaining_sec = 0
+        next_session_at = None
+    elif in_cooldown and cooldown_end:
+        session_time_remaining_sec = 0
+        cooldown_remaining_sec = max(0, int((cooldown_end - now).total_seconds()))
+        next_session_at = cooldown_end.isoformat()
+    else:
+        session_time_remaining_sec = max(0, session_dur_sec - accumulated)
+        cooldown_remaining_sec = 0
+        next_session_at = None
+
+    return {
+        "sessions_enabled": True,
+        "current_session": current_session,
+        "max_sessions": max_sessions,
+        "session_duration_minutes": session_config["session_duration_minutes"],
+        "cooldown_duration_minutes": session_config["cooldown_duration_minutes"],
+        "session_time_remaining_seconds": session_time_remaining_sec,
+        "in_cooldown": in_cooldown,
+        "cooldown_remaining_seconds": cooldown_remaining_sec,
+        "next_session_at": next_session_at,
+        "sessions_exhausted": sessions_exhausted,
+    }

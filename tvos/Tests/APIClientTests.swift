@@ -553,4 +553,53 @@ struct APIClientTests {
         #expect(response.status == "granted")
         #expect(response.bonusMinutes == 30)
     }
+
+    // MARK: - Session Status
+
+    @Test("Get session status — sessions disabled")
+    func getSessionStatusDisabled() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/session-status", json: [
+            "sessions_enabled": false
+        ])
+
+        let status = try await client.getSessionStatus(childId: 1)
+        #expect(!status.sessionsEnabled)
+        #expect(status.inCooldown == nil)
+    }
+
+    @Test("Get session status — in cooldown")
+    func getSessionStatusInCooldown() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/session-status", json: [
+            "sessions_enabled": true,
+            "current_session": 1,
+            "max_sessions": 3,
+            "in_cooldown": true,
+            "cooldown_remaining_seconds": 600,
+            "sessions_exhausted": false
+        ] as [String: Any])
+
+        let status = try await client.getSessionStatus(childId: 1)
+        #expect(status.sessionsEnabled)
+        #expect(status.inCooldown == true)
+        #expect(status.cooldownRemainingSeconds == 600)
+    }
+
+    @Test("Get session status — sessions exhausted")
+    func getSessionStatusExhausted() async throws {
+        let client = makeClient()
+        MockURLProtocol.mock(path: "/api/session-status", json: [
+            "sessions_enabled": true,
+            "current_session": 3,
+            "max_sessions": 3,
+            "in_cooldown": false,
+            "sessions_exhausted": true
+        ] as [String: Any])
+
+        let status = try await client.getSessionStatus(childId: 1)
+        #expect(status.sessionsEnabled)
+        #expect(status.sessionsExhausted == true)
+        #expect(status.inCooldown == false)
+    }
 }

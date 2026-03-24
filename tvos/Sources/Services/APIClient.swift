@@ -280,6 +280,13 @@ final class APIClient: Sendable {
         return try await get("/api/time-request/status", query: ["child_id": String(childId)])
     }
 
+    // MARK: - Session Status
+
+    /// Get the child's current session status (cooldown, sessions exhausted, etc.).
+    func getSessionStatus(childId: Int) async throws -> SessionStatus {
+        return try await get("/api/session-status", query: ["child_id": String(childId)])
+    }
+
     // MARK: - PIN Lock
 
     /// Check if a child profile has PIN lock enabled.

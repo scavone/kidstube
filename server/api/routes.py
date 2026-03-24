@@ -14,6 +14,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -55,6 +56,7 @@ from api.models import (
     VerifyPinBody,
     VerifyPinResponse,
     PinStatusResponse,
+    SessionStatusResponse,
 )
 from utils import (
     get_today_str,
@@ -63,6 +65,7 @@ from utils import (
     format_time_12h,
     resolve_day_schedule,
     minutes_until_schedule_end,
+    compute_session_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -1246,6 +1249,32 @@ async def schedule_status(child_id: int = Query(..., gt=0)):
     )
 
 
+# ── Session Status ───────────────────────────────────────────────────
+
+@router.get("/session-status")
+async def session_status(child_id: int = Query(..., gt=0)):
+    """Return current session windowing state for a child.
+
+    Returns {"sessions_enabled": false} when sessions are not configured.
+    """
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    session_cfg = video_store.get_session_config(child_id)
+    if session_cfg is None:
+        return SessionStatusResponse(sessions_enabled=False)
+
+    tz = config.watch_limits.timezone
+    today = get_today_str(tz)
+    bounds = get_day_utc_bounds(today, tz)
+    watch_entries = video_store.get_watch_log_for_day(child_id, bounds)
+    now = datetime.now(timezone.utc)
+
+    state = compute_session_state(session_cfg, watch_entries, now)
+    return SessionStatusResponse(**state)
+
+
 # ── Time Requests (More Time) ─────────────────────────────────────
 
 @router.post("/time-request")
@@ -1670,5 +1699,17 @@ def _get_remaining_seconds(child_id: int) -> int:
 
     bounds = get_day_utc_bounds(today, tz)
     used_min = video_store.get_daily_watch_minutes(child_id, today, utc_bounds=bounds)
-    remaining = max(0.0, limit_min - used_min)
-    return int(remaining * 60)
+    daily_remaining_sec = int(max(0.0, limit_min - used_min) * 60)
+
+    # If session windowing is active, apply session constraints
+    session_cfg = video_store.get_session_config(child_id)
+    if session_cfg is not None:
+        watch_entries = video_store.get_watch_log_for_day(child_id, bounds)
+        now = datetime.now(timezone.utc)
+        state = compute_session_state(session_cfg, watch_entries, now)
+        if state["sessions_exhausted"] or state["in_cooldown"]:
+            return 0
+        session_remaining = state["session_time_remaining_seconds"]
+        return min(daily_remaining_sec, session_remaining)
+
+    return daily_remaining_sec

@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var catalogRefreshTrigger = 0
     @State private var overlayScreen: OverlayScreen?
     @State private var timeStatus: TimeStatus?
+    @State private var sessionStatus: SessionStatus?
     @State private var browsingChannel: ChannelSearchResult?
     @State private var pinGateState: PinGateState = .authenticated
     @State private var suppressAutoSelect = false
@@ -72,8 +73,7 @@ struct ContentView: View {
                 video: item.video,
                 child: item.child,
                 onTimesUp: {
-                    playerItem = nil
-                    overlayScreen = .timesUp
+                    handleTimesUp(child: item.child)
                 },
                 onOutsideSchedule: {
                     playerItem = nil
@@ -120,6 +120,15 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: overlayScreen)
         .task {
             await refreshTimeStatus(childId: child.id)
+        }
+        .task(id: child.id) {
+            // Check session status on load, then every 30s
+            await checkSessionStatus(childId: child.id)
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                guard !Task.isCancelled else { break }
+                await checkSessionStatus(childId: child.id)
+            }
         }
         .onChange(of: catalogRefreshTrigger) {
             Task { await refreshTimeStatus(childId: child.id) }
@@ -289,6 +298,17 @@ struct ContentView: View {
                     selectedChild = nil
                 }
             )
+
+        case .cooldown:
+            if let status = sessionStatus {
+                CooldownView(
+                    sessionStatus: status,
+                    onUnlock: {
+                        overlayScreen = nil
+                        Task { await checkSessionStatus(childId: child.id) }
+                    }
+                )
+            }
         }
     }
 
@@ -353,11 +373,56 @@ struct ContentView: View {
         }
     }
 
+    private func checkSessionStatus(childId: Int) async {
+        do {
+            let status = try await APIClient().getSessionStatus(childId: childId)
+            sessionStatus = status
+            guard status.sessionsEnabled else { return }
+            if status.inCooldown == true || status.sessionsExhausted == true {
+                overlayScreen = .cooldown
+            } else if overlayScreen == .cooldown {
+                // Cooldown expired — return to normal browsing
+                overlayScreen = nil
+            }
+        } catch {
+            // Non-critical
+        }
+    }
+
+    /// Handle time-up event from the player.
+    /// Shows cooldown screen if sessions are active and a cooldown is pending,
+    /// otherwise shows the standard time's-up screen.
+    private func handleTimesUp(child: ChildProfile) {
+        playerItem = nil
+        Task {
+            do {
+                let status = try await APIClient().getSessionStatus(childId: child.id)
+                sessionStatus = status
+                if status.sessionsEnabled && (status.inCooldown == true || status.sessionsExhausted == true) {
+                    overlayScreen = .cooldown
+                } else {
+                    overlayScreen = .timesUp
+                }
+            } catch {
+                overlayScreen = .timesUp
+            }
+        }
+    }
+
     /// Play a video from the catalog (carries watch position data for resume).
     private func playVideo(_ video: Video) {
         pendingVideoId = video.videoId
         pendingVideoTitle = video.title
         guard let child = selectedChild else { return }
+
+        // Block playback immediately if a cooldown or exhausted session is already cached
+        if let session = sessionStatus, session.sessionsEnabled {
+            if session.inCooldown == true || session.sessionsExhausted == true {
+                overlayScreen = .cooldown
+                return
+            }
+        }
+
         Task {
             let apiClient = APIClient()
             do {
@@ -459,4 +524,5 @@ enum OverlayScreen: Equatable {
     case denied
     case timesUp
     case outsideSchedule
+    case cooldown
 }

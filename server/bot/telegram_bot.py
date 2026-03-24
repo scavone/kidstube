@@ -33,6 +33,7 @@ from utils import (
     is_within_schedule,
     format_duration,
     resolve_day_schedule,
+    compute_session_state,
     _DAY_NAMES,
 )
 
@@ -113,6 +114,9 @@ class TelegramBot:
             CommandHandler("devices", self._cmd_devices),
             CommandHandler("pin", self._cmd_pin),
             CommandHandler("setup", self._cmd_setup),
+            CommandHandler("sessions", self._cmd_sessions),
+            CommandHandler("set_sessions", self._cmd_set_sessions),
+            CommandHandler("clear_sessions", self._cmd_clear_sessions),
             MessageHandler(filters.PHOTO & ~filters.COMMAND, self._handle_photo),
             CallbackQueryHandler(self._handle_callback),
         ]
@@ -2536,6 +2540,158 @@ class TelegramBot:
             except Exception:
                 pass
         await message.reply_text(text, **kwargs)
+
+    # ── Session Windowing Commands ──────────────────────────────────
+
+    async def _cmd_sessions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/sessions [ChildName] — Show current session status for a child."""
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        child, _ = self._parse_child_args(args)
+        if not child:
+            children = self._all_children()
+            if not children:
+                await update.effective_message.reply_text("No child profiles yet.")
+                return
+            if len(children) == 1:
+                child = children[0]
+            else:
+                names = ", ".join(c["name"] for c in children)
+                await update.effective_message.reply_text(
+                    f"Specify a child: /sessions ChildName\nChildren: {names}"
+                )
+                return
+
+        cid = child["id"]
+        cname = child["name"]
+        session_cfg = self.video_store.get_session_config(cid)
+
+        if session_cfg is None:
+            await update.effective_message.reply_text(
+                f"<b>{_esc(cname)}</b> — No session windowing configured.\n\n"
+                f"Use /set_sessions {_esc(cname)} &lt;session_min&gt; &lt;cooldown_min&gt; to enable.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        from datetime import datetime, timezone as _tz
+        tz = self.config.watch_limits.timezone
+        today = get_today_str(tz)
+        bounds = get_day_utc_bounds(today, tz)
+        watch_entries = self.video_store.get_watch_log_for_day(cid, bounds)
+        now = datetime.now(_tz.utc)
+        state = compute_session_state(session_cfg, watch_entries, now)
+
+        dur = state["session_duration_minutes"]
+        cool = state["cooldown_duration_minutes"]
+        cur = state["current_session"]
+        max_s = state["max_sessions"]
+        exhausted = state["sessions_exhausted"]
+        in_cool = state["in_cooldown"]
+        cool_rem = state["cooldown_remaining_seconds"]
+        sess_rem = state["session_time_remaining_seconds"]
+        next_at = state["next_session_at"]
+
+        session_label = f"Session {cur}" + (f"/{max_s}" if max_s else "")
+        lines = [f"<b>{_esc(cname)} — Session Status</b>"]
+        lines.append(f"Config: {dur} min sessions, {cool} min cooldowns"
+                     + (f", max {max_s}/day" if max_s else ""))
+
+        if exhausted:
+            lines.append(f"\n{session_label} — Sessions exhausted for today.")
+        elif in_cool:
+            mins_left = (cool_rem + 59) // 60
+            next_str = ""
+            if next_at:
+                try:
+                    next_dt = datetime.fromisoformat(next_at)
+                    next_str = f" (unlocks at {next_dt.strftime('%H:%M UTC')})"
+                except Exception:
+                    pass
+            lines.append(f"\n{session_label} — In cooldown, {mins_left} min remaining{next_str}.")
+        else:
+            mins_left = (sess_rem + 59) // 60
+            lines.append(f"\n{session_label} — {mins_left} min left in this session.")
+
+        await update.effective_message.reply_text(
+            "\n".join(lines), parse_mode=ParseMode.HTML,
+        )
+
+    async def _cmd_set_sessions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/set_sessions <ChildName> <session_min> <cooldown_min> [max_sessions]"""
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        child, remaining = self._parse_child_args(args)
+        if not child or len(remaining) < 2:
+            await update.effective_message.reply_text(
+                "Usage: /set_sessions ChildName session_min cooldown_min [max_sessions]\n"
+                "Example: /set_sessions Alex 30 30 3"
+            )
+            return
+
+        try:
+            session_min = int(remaining[0])
+            cooldown_min = int(remaining[1])
+            if session_min <= 0 or cooldown_min <= 0:
+                raise ValueError
+        except ValueError:
+            await update.effective_message.reply_text(
+                "session_min and cooldown_min must be positive integers."
+            )
+            return
+
+        max_sessions = None
+        if len(remaining) >= 3:
+            try:
+                max_sessions = int(remaining[2])
+                if max_sessions <= 0:
+                    raise ValueError
+            except ValueError:
+                await update.effective_message.reply_text(
+                    "max_sessions must be a positive integer."
+                )
+                return
+
+        self.video_store.set_session_config(
+            child["id"], session_min, cooldown_min, max_sessions
+        )
+        max_str = f", max {max_sessions}/day" if max_sessions else ""
+        await update.effective_message.reply_text(
+            f"Session windowing enabled for <b>{_esc(child['name'])}</b>: "
+            f"{session_min} min sessions, {cooldown_min} min cooldowns{max_str}.",
+            parse_mode=ParseMode.HTML,
+        )
+
+    async def _cmd_clear_sessions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/clear_sessions [ChildName] — Disable session windowing for a child."""
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        child, _ = self._parse_child_args(args)
+        if not child:
+            children = self._all_children()
+            if not children:
+                await update.effective_message.reply_text("No child profiles yet.")
+                return
+            if len(children) == 1:
+                child = children[0]
+            else:
+                names = ", ".join(c["name"] for c in children)
+                await update.effective_message.reply_text(
+                    f"Specify a child: /clear_sessions ChildName\nChildren: {names}"
+                )
+                return
+
+        self.video_store.clear_session_config(child["id"])
+        await update.effective_message.reply_text(
+            f"Session windowing <b>disabled</b> for <b>{_esc(child['name'])}</b>.",
+            parse_mode=ParseMode.HTML,
+        )
 
     def _parse_child_args(self, args: list) -> tuple[Optional[dict], list]:
         """Parse args where the first arg may be a child name.

@@ -914,6 +914,73 @@ class VideoStore:
             self.conn.commit()
             return cursor.rowcount > 0
 
+    # ── Session Windowing Config ─────────────────────────────────────
+
+    def get_session_config(self, child_id: int) -> Optional[dict]:
+        """Return session windowing config for a child, or None if not configured."""
+        dur = self.get_child_setting(child_id, "session_duration_minutes", "")
+        cooldown = self.get_child_setting(child_id, "session_cooldown_minutes", "")
+        if not dur or not cooldown:
+            return None
+        try:
+            max_str = self.get_child_setting(child_id, "session_max_per_day", "")
+            return {
+                "session_duration_minutes": int(dur),
+                "cooldown_duration_minutes": int(cooldown),
+                "max_sessions_per_day": int(max_str) if max_str else None,
+            }
+        except ValueError:
+            return None
+
+    def set_session_config(
+        self,
+        child_id: int,
+        session_duration: int,
+        cooldown_duration: int,
+        max_sessions: Optional[int] = None,
+    ) -> None:
+        """Configure session windowing for a child (upsert)."""
+        self.set_child_setting(child_id, "session_duration_minutes", str(session_duration))
+        self.set_child_setting(child_id, "session_cooldown_minutes", str(cooldown_duration))
+        if max_sessions is not None:
+            self.set_child_setting(child_id, "session_max_per_day", str(max_sessions))
+        else:
+            # Clear any previous max
+            with self._lock:
+                self.conn.execute(
+                    "DELETE FROM child_settings WHERE child_id = ? AND key = 'session_max_per_day'",
+                    (child_id,),
+                )
+                self.conn.commit()
+
+    def clear_session_config(self, child_id: int) -> None:
+        """Remove session windowing config for a child."""
+        with self._lock:
+            self.conn.execute(
+                """DELETE FROM child_settings
+                   WHERE child_id = ? AND key IN (
+                       'session_duration_minutes',
+                       'session_cooldown_minutes',
+                       'session_max_per_day'
+                   )""",
+                (child_id,),
+            )
+            self.conn.commit()
+
+    def get_watch_log_for_day(
+        self, child_id: int, utc_bounds: tuple
+    ) -> list:
+        """Return (duration_seconds, watched_at_utc) tuples for today, sorted ASC."""
+        start, end = utc_bounds
+        with self._lock:
+            cursor = self.conn.execute(
+                """SELECT duration, watched_at FROM watch_log
+                   WHERE child_id = ? AND watched_at >= ? AND watched_at < ?
+                   ORDER BY watched_at ASC""",
+                (child_id, start, end),
+            )
+            return [(row[0], row[1]) for row in cursor.fetchall()]
+
     # ── Watch Time Tracking ─────────────────────────────────────────
 
     def record_watch_seconds(self, video_id: str, child_id: int, seconds: int) -> None:

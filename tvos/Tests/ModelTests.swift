@@ -675,3 +675,102 @@ struct TimeRequestModelTests {
         #expect(dict["child_id"] as? Int == 2)
     }
 }
+
+// MARK: - SessionStatus Tests
+
+@Suite("SessionStatus")
+struct SessionStatusTests {
+
+    @Test("Decode sessions disabled")
+    func decodeSessionsDisabled() throws {
+        let json = """
+        {"sessions_enabled": false}
+        """.data(using: .utf8)!
+
+        let status = try JSONDecoder().decode(SessionStatus.self, from: json)
+        #expect(!status.sessionsEnabled)
+        #expect(status.currentSession == nil)
+        #expect(status.maxSessions == nil)
+        #expect(status.inCooldown == nil)
+        #expect(status.sessionsExhausted == nil)
+    }
+
+    @Test("Decode active session (not in cooldown)")
+    func decodeActiveSession() throws {
+        let json = """
+        {
+            "sessions_enabled": true,
+            "current_session": 1,
+            "max_sessions": 3,
+            "session_duration_minutes": 30,
+            "cooldown_duration_minutes": 15,
+            "session_time_remaining_seconds": 900,
+            "in_cooldown": false,
+            "cooldown_remaining_seconds": null,
+            "next_session_at": null,
+            "sessions_exhausted": false
+        }
+        """.data(using: .utf8)!
+
+        let status = try JSONDecoder().decode(SessionStatus.self, from: json)
+        #expect(status.sessionsEnabled)
+        #expect(status.currentSession == 1)
+        #expect(status.maxSessions == 3)
+        #expect(status.sessionDurationMinutes == 30)
+        #expect(status.cooldownDurationMinutes == 15)
+        #expect(status.sessionTimeRemainingSeconds == 900)
+        #expect(status.inCooldown == false)
+        #expect(status.cooldownRemainingSeconds == nil)
+        #expect(status.sessionsExhausted == false)
+    }
+
+    @Test("Decode cooldown state")
+    func decodeCooldownState() throws {
+        let json = """
+        {
+            "sessions_enabled": true,
+            "current_session": 2,
+            "max_sessions": 3,
+            "session_duration_minutes": 30,
+            "cooldown_duration_minutes": 15,
+            "session_time_remaining_seconds": 0,
+            "in_cooldown": true,
+            "cooldown_remaining_seconds": 720,
+            "next_session_at": "2026-03-24T16:00:00Z",
+            "sessions_exhausted": false
+        }
+        """.data(using: .utf8)!
+
+        let status = try JSONDecoder().decode(SessionStatus.self, from: json)
+        #expect(status.sessionsEnabled)
+        #expect(status.inCooldown == true)
+        #expect(status.cooldownRemainingSeconds == 720)
+        #expect(status.nextSessionAt == "2026-03-24T16:00:00Z")
+        #expect(status.sessionsExhausted == false)
+    }
+
+    @Test("Decode sessions exhausted")
+    func decodeSessionsExhausted() throws {
+        let json = """
+        {
+            "sessions_enabled": true,
+            "current_session": 3,
+            "max_sessions": 3,
+            "session_duration_minutes": 30,
+            "cooldown_duration_minutes": 15,
+            "session_time_remaining_seconds": 0,
+            "in_cooldown": false,
+            "cooldown_remaining_seconds": null,
+            "next_session_at": null,
+            "sessions_exhausted": true
+        }
+        """.data(using: .utf8)!
+
+        let status = try JSONDecoder().decode(SessionStatus.self, from: json)
+        #expect(status.sessionsEnabled)
+        #expect(status.sessionsExhausted == true)
+        #expect(status.currentSession == 3)
+        #expect(status.maxSessions == 3)
+        #expect(status.inCooldown == false)
+    }
+}

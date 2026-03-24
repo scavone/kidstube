@@ -232,3 +232,18 @@ class PairedDeviceResponse(BaseModel):
     paired_at: str
     last_seen_at: Optional[str] = None
     is_active: bool
+
+
+# ── Session Windowing ────────────────────────────────────────────
+
+class SessionStatusResponse(BaseModel):
+    sessions_enabled: bool
+    current_session: Optional[int] = None
+    max_sessions: Optional[int] = None
+    session_duration_minutes: Optional[int] = None
+    cooldown_duration_minutes: Optional[int] = None
+    session_time_remaining_seconds: Optional[int] = None
+    in_cooldown: Optional[bool] = None
+    cooldown_remaining_seconds: Optional[int] = None
+    next_session_at: Optional[str] = None
+    sessions_exhausted: Optional[bool] = None
