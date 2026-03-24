@@ -400,12 +400,26 @@ class InvidiousClient:
         if thumbnail_url and thumbnail_url.startswith("/"):
             thumbnail_url = f"{self.base_url}{thumbnail_url}"
 
+        # Generate predictable YouTube thumbnail frame URLs (~25%, 50%, 75% of video)
+        thumbnail_urls = [
+            f"https://i.ytimg.com/vi/{video_id}/1.jpg",
+            f"https://i.ytimg.com/vi/{video_id}/2.jpg",
+            f"https://i.ytimg.com/vi/{video_id}/3.jpg",
+        ]
+        # Prepend storyboard URL if available (present in full video metadata, not search)
+        storyboards = item.get("storyboards", [])
+        if storyboards:
+            sb_url = storyboards[0].get("url", "")
+            if sb_url:
+                thumbnail_urls.insert(0, sb_url)
+
         return {
             "video_id": video_id,
             "title": item.get("title", ""),
             "channel_name": item.get("author", ""),
             "channel_id": item.get("authorId", ""),
             "thumbnail_url": thumbnail_url,
+            "thumbnail_urls": thumbnail_urls,
             "duration": item.get("lengthSeconds", 0),
             "published": item.get("published", 0),
             "view_count": item.get("viewCount", 0),

@@ -29,6 +29,7 @@ struct HomeChannelVideo: Codable, Equatable {
     let videoId: String
     let title: String
     var thumbnailUrl: String?
+    var thumbnailUrls: [String]?
     var duration: Int?
     var publishedAt: Int?
 
@@ -49,6 +50,7 @@ struct HomeChannelVideo: Codable, Equatable {
         case videoId = "video_id"
         case title
         case thumbnailUrl = "thumbnail_url"
+        case thumbnailUrls = "thumbnail_urls"
         case duration
         case publishedAt = "published_at"
     }

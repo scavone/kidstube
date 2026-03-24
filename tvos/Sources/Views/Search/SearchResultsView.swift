@@ -112,6 +112,7 @@ struct SearchResultsView: View {
                 title: result.title,
                 channelName: result.channelName,
                 thumbnailUrl: result.thumbnailUrl,
+                thumbnailUrls: result.thumbnailUrls ?? [],
                 duration: result.formattedDuration,
                 badge: statusBadge(result)
             )

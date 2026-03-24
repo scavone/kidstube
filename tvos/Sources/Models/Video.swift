@@ -9,6 +9,7 @@ struct Video: Codable, Identifiable, Equatable {
     let channelName: String
     var channelId: String?
     var thumbnailUrl: String?
+    var thumbnailUrls: [String]?
     var duration: Int?
     var category: String?
     var description: String?
@@ -46,6 +47,7 @@ struct Video: Codable, Identifiable, Equatable {
         case channelName = "channel_name"
         case channelId = "channel_id"
         case thumbnailUrl = "thumbnail_url"
+        case thumbnailUrls = "thumbnail_urls"
         case duration, category, description
         case effectiveCategory = "effective_category"
         case accessDecidedAt = "access_decided_at"

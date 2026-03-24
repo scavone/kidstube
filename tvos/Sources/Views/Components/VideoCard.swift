@@ -1,23 +1,26 @@
 import SwiftUI
 
 /// A thumbnail card displaying a video's poster, title, channel, and duration.
-/// Used in both catalog grids and search results.
+/// When focused and `thumbnailUrls` is non-empty, cycles through thumbnails every 1.5 s
+/// with a crossfade animation. Falls back to single `thumbnailUrl` when no extras are provided.
 struct VideoCard: View {
     let title: String
     let channelName: String
     let thumbnailUrl: String?
+    let thumbnailUrls: [String]
     let duration: String
     let badge: String?
-    /// When true, the card tracks focus itself (for standalone use).
-    /// Set to false when the card is inside a Button to avoid stealing focus.
     let tracksFocus: Bool
     let progress: Double?
     let isWatched: Bool
+
+    @State private var currentThumbIndex: Int = 0
 
     init(
         title: String,
         channelName: String,
         thumbnailUrl: String?,
+        thumbnailUrls: [String] = [],
         duration: String,
         badge: String? = nil,
         tracksFocus: Bool = true,
@@ -27,6 +30,7 @@ struct VideoCard: View {
         self.title = title
         self.channelName = channelName
         self.thumbnailUrl = thumbnailUrl
+        self.thumbnailUrls = thumbnailUrls
         self.duration = duration
         self.badge = badge
         self.tracksFocus = tracksFocus
@@ -38,7 +42,7 @@ struct VideoCard: View {
         VStack(alignment: .leading, spacing: 8) {
             // Thumbnail
             ZStack(alignment: .bottomTrailing) {
-                thumbnailImage
+                thumbnailImageView
                     .frame(height: 180)
                     .clipped()
                     .opacity(isWatched ? 0.7 : 1.0)
@@ -115,7 +119,40 @@ struct VideoCard: View {
                 .lineLimit(1)
         }
         .frame(width: 300)
-        .modifier(FocusScaleModifier(tracksFocus: tracksFocus))
+        .modifier(FocusCycleModifier(
+            tracksFocus: tracksFocus,
+            thumbnailUrls: thumbnailUrls,
+            currentThumbIndex: $currentThumbIndex
+        ))
+    }
+
+    /// Shows the cycling thumbnail when extras are available, otherwise the primary thumbnail.
+    @ViewBuilder
+    private var thumbnailImageView: some View {
+        if !thumbnailUrls.isEmpty {
+            let idx = min(currentThumbIndex, thumbnailUrls.count - 1)
+            let urlString = thumbnailUrls[idx]
+            if let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(16/9, contentMode: .fill)
+                    case .failure:
+                        placeholderImage
+                    default:
+                        placeholderImage
+                    }
+                }
+                .id(urlString)
+                .transition(.opacity)
+            } else {
+                placeholderImage
+            }
+        } else {
+            thumbnailImage
+        }
     }
 
     @ViewBuilder
@@ -160,24 +197,60 @@ struct VideoCard: View {
     }
 }
 
-/// Conditionally applies focus tracking and scale effect.
-/// When `tracksFocus` is false, the view is not focusable (avoids stealing
-/// focus from a parent Button on tvOS).
-/// When true, uses `.focusable()` so the card can receive tap and long-press
-/// gestures directly on tvOS without a wrapping Button.
-private struct FocusScaleModifier: ViewModifier {
+/// Handles focus tracking, scale animation, and thumbnail cycling for VideoCard.
+/// Cycles every 1.5 s with a crossfade while focused; stops on focus loss.
+/// Preloads all cycle images via URLSession when the card first receives focus.
+private struct FocusCycleModifier: ViewModifier {
     let tracksFocus: Bool
+    let thumbnailUrls: [String]
+    @Binding var currentThumbIndex: Int
+
     @FocusState private var isFocused: Bool
+    @State private var cycleTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         if tracksFocus {
             content
                 .focusable()
+                .focused($isFocused)
                 .scaleEffect(isFocused ? 1.05 : 1.0)
                 .animation(.easeInOut(duration: 0.15), value: isFocused)
-                .focused($isFocused)
+                .onChange(of: isFocused) {
+                    if isFocused && !thumbnailUrls.isEmpty {
+                        currentThumbIndex = 0
+                        preloadImages()
+                        startCycling()
+                    } else {
+                        cycleTask?.cancel()
+                        cycleTask = nil
+                    }
+                }
+                .onDisappear {
+                    cycleTask?.cancel()
+                    cycleTask = nil
+                }
         } else {
             content
+        }
+    }
+
+    private func startCycling() {
+        cycleTask?.cancel()
+        cycleTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard !Task.isCancelled else { break }
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    currentThumbIndex = (currentThumbIndex + 1) % thumbnailUrls.count
+                }
+            }
+        }
+    }
+
+    private func preloadImages() {
+        for urlString in thumbnailUrls {
+            guard let url = URL(string: urlString) else { continue }
+            URLSession.shared.dataTask(with: url) { _, _, _ in }.resume()
         }
     }
 }

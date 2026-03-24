@@ -8,6 +8,7 @@ struct SearchResult: Codable, Identifiable, Equatable {
     let channelName: String
     var channelId: String?
     var thumbnailUrl: String?
+    var thumbnailUrls: [String]?
     var duration: Int?
     var published: Int?
     var viewCount: Int?
@@ -39,6 +40,7 @@ struct SearchResult: Codable, Identifiable, Equatable {
         case channelName = "channel_name"
         case channelId = "channel_id"
         case thumbnailUrl = "thumbnail_url"
+        case thumbnailUrls = "thumbnail_urls"
         case duration, published
         case viewCount = "view_count"
         case accessStatus = "access_status"

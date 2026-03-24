@@ -74,6 +74,22 @@ public_router = APIRouter(prefix="/api")
 
 VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 
+
+def _add_thumbnail_urls(video: dict) -> dict:
+    """Enrich a video dict with predictable YouTube thumbnail frame URLs.
+
+    Used for DB-sourced video dicts that don't go through _normalize_video().
+    Invidious-sourced dicts already have thumbnail_urls set by the client.
+    """
+    vid = video.get("video_id", "")
+    if vid and "thumbnail_urls" not in video:
+        video["thumbnail_urls"] = [
+            f"https://i.ytimg.com/vi/{vid}/1.jpg",
+            f"https://i.ytimg.com/vi/{vid}/2.jpg",
+            f"https://i.ytimg.com/vi/{vid}/3.jpg",
+        ]
+    return video
+
 # Injected by main.py at startup
 video_store = None
 invidious_client = None
@@ -388,6 +404,7 @@ async def get_video_detail(
     video["last_watched_at"] = pos["last_watched_at"] if pos else None
     video["watch_status"] = pos.get("watch_status") if pos else None
 
+    _add_thumbnail_urls(video)
     return video
 
 
@@ -717,6 +734,9 @@ async def get_catalog(
         limit=limit,
     )
 
+    for v in videos:
+        _add_thumbnail_urls(v)
+
     return {
         "videos": videos,
         "has_more": offset + limit < total,
@@ -741,6 +761,8 @@ async def get_recently_added(
         raise HTTPException(status_code=404, detail="Child not found")
 
     videos = video_store.get_recently_added_videos(child_id, limit=limit)
+    for v in videos:
+        _add_thumbnail_urls(v)
     return RecentlyAddedResponse(videos=videos)
 
 
@@ -784,6 +806,9 @@ async def get_channels_home(child_id: int = Query(..., gt=0)):
             except Exception:
                 logger.warning("Failed to fetch channel info for %s", ch["channel_id"])
 
+        latest_video = ch.get("latest_video")
+        if latest_video:
+            _add_thumbnail_urls(latest_video)
         return ChannelHomeItem(
             channel_name=ch["channel_name"],
             channel_id=ch.get("channel_id"),
@@ -791,7 +816,7 @@ async def get_channels_home(child_id: int = Query(..., gt=0)):
             category=ch.get("category"),
             thumbnail_url=thumbnail_url,
             banner_url=banner_url,
-            latest_video=ch.get("latest_video"),
+            latest_video=latest_video,
         )
 
     items = await asyncio.gather(*[enrich_channel(ch) for ch in channels_data])
@@ -896,6 +921,9 @@ async def get_channel_detail(
     )
 
     video_count = video_store.get_channel_video_count(child_id, channel_id)
+
+    for v in videos:
+        _add_thumbnail_urls(v)
 
     return ChannelDetailResponse(
         channel_name=channel_name,

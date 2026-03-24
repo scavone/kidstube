@@ -126,6 +126,7 @@ struct ChannelDetailView: View {
                 title: video.title,
                 channelName: video.channelName,
                 thumbnailUrl: video.thumbnailUrl,
+                thumbnailUrls: video.thumbnailUrls ?? [],
                 duration: video.formattedDuration,
                 badge: statusBadge(video)
             )

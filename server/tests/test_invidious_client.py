@@ -432,3 +432,57 @@ class TestIsFamilyFriendly:
         raw = {"videoId": "abc123"}
         result = client._normalize_video(raw)
         assert result["is_family_friendly"] is True
+
+
+class TestThumbnailUrls:
+    """Tests for thumbnail_urls field in _normalize_video (#14)."""
+
+    def test_always_includes_three_youtube_frame_urls(self, client):
+        raw = {"videoId": "abc123defgh"}
+        result = client._normalize_video(raw)
+        assert "thumbnail_urls" in result
+        assert result["thumbnail_urls"] == [
+            "https://i.ytimg.com/vi/abc123defgh/1.jpg",
+            "https://i.ytimg.com/vi/abc123defgh/2.jpg",
+            "https://i.ytimg.com/vi/abc123defgh/3.jpg",
+        ]
+
+    def test_thumbnail_urls_use_correct_video_id(self, client):
+        raw = {"videoId": "dQw4w9WgXcQ"}
+        result = client._normalize_video(raw)
+        for url in result["thumbnail_urls"]:
+            assert "dQw4w9WgXcQ" in url
+
+    def test_storyboard_url_prepended_when_present(self, client):
+        raw = {
+            "videoId": "abc123defgh",
+            "storyboards": [
+                {"url": "https://i.ytimg.com/sb/abc123defgh/storyboard3_L1/M0.jpg?sqp=..."},
+                {"url": "https://i.ytimg.com/sb/abc123defgh/storyboard3_L2/M0.jpg?sqp=..."},
+            ],
+        }
+        result = client._normalize_video(raw)
+        assert result["thumbnail_urls"][0] == "https://i.ytimg.com/sb/abc123defgh/storyboard3_L1/M0.jpg?sqp=..."
+        # Still includes the 3 predictable frame URLs after the storyboard
+        assert len(result["thumbnail_urls"]) == 4
+        assert "https://i.ytimg.com/vi/abc123defgh/1.jpg" in result["thumbnail_urls"]
+
+    def test_storyboard_without_url_field_ignored(self, client):
+        raw = {
+            "videoId": "abc123defgh",
+            "storyboards": [{"width": 160, "height": 90}],  # no "url" key
+        }
+        result = client._normalize_video(raw)
+        assert len(result["thumbnail_urls"]) == 3
+
+    def test_empty_storyboards_list_ignored(self, client):
+        raw = {"videoId": "abc123defgh", "storyboards": []}
+        result = client._normalize_video(raw)
+        assert len(result["thumbnail_urls"]) == 3
+
+    def test_thumbnail_urls_independent_of_thumbnail_url(self, client):
+        """thumbnail_urls should be populated even if primary thumbnail_url is None."""
+        raw = {"videoId": "abc123defgh", "videoThumbnails": []}
+        result = client._normalize_video(raw)
+        assert result["thumbnail_url"] is None
+        assert len(result["thumbnail_urls"]) == 3

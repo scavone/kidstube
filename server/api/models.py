@@ -65,6 +65,7 @@ class VideoResponse(BaseModel):
     channel_name: str
     channel_id: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    thumbnail_urls: list[str] = Field(default_factory=list)
     duration: Optional[int] = None
     category: Optional[str] = None
 
@@ -143,6 +144,7 @@ class LatestVideoResponse(BaseModel):
     video_id: str
     title: str
     thumbnail_url: Optional[str] = None
+    thumbnail_urls: list[str] = Field(default_factory=list)
     duration: Optional[int] = None
     published_at: Optional[int] = None
 
@@ -153,6 +155,7 @@ class ChannelHomeItem(BaseModel):
     handle: Optional[str] = None
     category: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    thumbnail_urls: list[str] = Field(default_factory=list)
     banner_url: Optional[str] = None
     latest_video: Optional[LatestVideoResponse] = None
 
