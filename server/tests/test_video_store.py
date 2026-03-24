@@ -983,6 +983,76 @@ class TestAutoComplete:
         assert pos["watch_duration"] == 0
 
 
+class TestChildPin:
+    """Tests for child profile PIN management."""
+
+    def test_set_and_verify_pin(self, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        assert store.verify_child_pin(child["id"], "1234") is True
+
+    def test_wrong_pin_fails(self, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        assert store.verify_child_pin(child["id"], "5678") is False
+
+    def test_has_child_pin(self, store):
+        child = store.add_child("Alex")
+        assert store.has_child_pin(child["id"]) is False
+        store.set_child_pin(child["id"], "1234")
+        assert store.has_child_pin(child["id"]) is True
+
+    def test_delete_child_pin(self, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        assert store.delete_child_pin(child["id"]) is True
+        assert store.has_child_pin(child["id"]) is False
+
+    def test_delete_nonexistent_pin(self, store):
+        child = store.add_child("Alex")
+        assert store.delete_child_pin(child["id"]) is False
+
+    def test_verify_no_pin_returns_false(self, store):
+        child = store.add_child("Alex")
+        assert store.verify_child_pin(child["id"], "1234") is False
+
+    def test_change_pin(self, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        store.set_child_pin(child["id"], "5678")
+        assert store.verify_child_pin(child["id"], "1234") is False
+        assert store.verify_child_pin(child["id"], "5678") is True
+
+    def test_pin_uses_salt(self, store):
+        """Each set_child_pin should use a unique salt."""
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        stored1 = store.get_child_setting(child["id"], "pin")
+        store.set_child_pin(child["id"], "1234")
+        stored2 = store.get_child_setting(child["id"], "pin")
+        # Different salts → different stored values
+        assert stored1 != stored2
+        # But both still verify
+        assert store.verify_child_pin(child["id"], "1234") is True
+
+    def test_pin_independent_per_child(self, store):
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        store.set_child_pin(alex["id"], "1111")
+        store.set_child_pin(sam["id"], "2222")
+        assert store.verify_child_pin(alex["id"], "1111") is True
+        assert store.verify_child_pin(alex["id"], "2222") is False
+        assert store.verify_child_pin(sam["id"], "2222") is True
+        assert store.verify_child_pin(sam["id"], "1111") is False
+
+    def test_pin_deleted_with_child(self, store):
+        """PIN should be deleted when child is removed (CASCADE)."""
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        store.remove_child(child["id"])
+        assert store.has_child_pin(child["id"]) is False
+
+
 class TestPairing:
     """Tests for pairing session and device management."""
 

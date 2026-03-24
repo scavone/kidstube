@@ -7,6 +7,7 @@ Extends BrainRotGuard's VideoStore patterns with:
 - watch_log keyed by child_id
 """
 
+import hashlib
 import secrets
 import sqlite3
 import threading
@@ -400,6 +401,37 @@ class VideoStore:
                 (child_id,),
             )
             return {row[0]: row[1] for row in cursor.fetchall()}
+
+    # ── Child PIN ────────────────────────────────────────────────────
+
+    def set_child_pin(self, child_id: int, pin: str) -> None:
+        """Hash and store a PIN for a child profile."""
+        salt = secrets.token_hex(16)
+        pin_hash = hashlib.sha256(f"{salt}:{pin}".encode()).hexdigest()
+        self.set_child_setting(child_id, "pin", f"{salt}:{pin_hash}")
+
+    def has_child_pin(self, child_id: int) -> bool:
+        """Check whether a PIN is set for this child."""
+        return bool(self.get_child_setting(child_id, "pin"))
+
+    def verify_child_pin(self, child_id: int, pin: str) -> bool:
+        """Verify a PIN against the stored hash. Returns False if no PIN is set."""
+        stored = self.get_child_setting(child_id, "pin")
+        if not stored or ":" not in stored:
+            return False
+        salt, expected_hash = stored.split(":", 1)
+        actual_hash = hashlib.sha256(f"{salt}:{pin}".encode()).hexdigest()
+        return secrets.compare_digest(actual_hash, expected_hash)
+
+    def delete_child_pin(self, child_id: int) -> bool:
+        """Remove the PIN for a child. Returns True if a PIN was deleted."""
+        with self._lock:
+            cursor = self.conn.execute(
+                "DELETE FROM child_settings WHERE child_id = ? AND key = 'pin'",
+                (child_id,),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
 
     # ── Videos ──────────────────────────────────────────────────────
 

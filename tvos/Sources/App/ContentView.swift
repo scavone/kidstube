@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var overlayScreen: OverlayScreen?
     @State private var timeStatus: TimeStatus?
     @State private var browsingChannel: ChannelSearchResult?
+    @State private var pinGateState: PinGateState = .authenticated
 
     var body: some View {
         Group {
@@ -23,7 +24,22 @@ struct ContentView: View {
                     isPaired = true
                 })
             } else if let child = selectedChild {
-                mainAppLayout(child: child)
+                switch pinGateState {
+                case .checking:
+                    pinCheckingView(child: child)
+                case .pinRequired:
+                    PinEntryView(
+                        child: child,
+                        onSuccess: {
+                            pinGateState = .authenticated
+                        },
+                        onCancel: {
+                            selectedChild = nil
+                        }
+                    )
+                case .authenticated:
+                    mainAppLayout(child: child)
+                }
             } else {
                 ProfilePickerView { profile in
                     selectedChild = profile
@@ -34,6 +50,15 @@ struct ContentView: View {
             // Reset to Home tab when switching profiles
             sidebarSection = .home
             browsingChannel = nil
+
+            if let child = selectedChild {
+                // Check PIN status for newly selected profile
+                checkPinStatus(child: child)
+            } else {
+                // Returning to profile picker — clear session
+                pinGateState = .authenticated
+                SessionManager.clearAll()
+            }
         }
         .fullScreenCover(item: $playerItem, onDismiss: {
             catalogRefreshTrigger += 1
@@ -93,6 +118,10 @@ struct ContentView: View {
         }
         .onChange(of: catalogRefreshTrigger) {
             Task { await refreshTimeStatus(childId: child.id) }
+        }
+        .onChange(of: sidebarSection) {
+            // Touch session on navigation to keep it alive
+            SessionManager.touch(childId: child.id)
         }
     }
 
@@ -258,6 +287,50 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - PIN Gate
+
+    @ViewBuilder
+    private func pinCheckingView(child: ChildProfile) -> some View {
+        ZStack {
+            AppTheme.background.ignoresSafeArea()
+            VStack(spacing: 16) {
+                ProgressView()
+                    .scaleEffect(1.2)
+                Text(child.name)
+                    .font(.callout)
+                    .foregroundColor(AppTheme.textSecondary)
+            }
+        }
+    }
+
+    private func checkPinStatus(child: ChildProfile) {
+        // If already has a valid session, skip PIN
+        if SessionManager.isAuthenticated(childId: child.id) {
+            pinGateState = .authenticated
+            return
+        }
+
+        pinGateState = .checking
+        Task {
+            let apiClient = APIClient()
+            do {
+                let status = try await apiClient.getPinStatus(childId: child.id)
+                await MainActor.run {
+                    if status.pinEnabled {
+                        pinGateState = .pinRequired
+                    } else {
+                        pinGateState = .authenticated
+                    }
+                }
+            } catch {
+                // If we can't check, let them through (fail open)
+                await MainActor.run {
+                    pinGateState = .authenticated
+                }
+            }
+        }
+    }
+
     // MARK: - Navigation Helpers
 
     private func refreshTimeStatus(childId: Int) async {
@@ -359,6 +432,13 @@ struct PlayerItem: Identifiable {
 }
 
 // MARK: - Overlay Screen State
+
+/// PIN gate state — tracks whether a profile needs PIN verification.
+enum PinGateState {
+    case checking       // Fetching pin-status from server
+    case pinRequired    // PIN entry screen shown
+    case authenticated  // Passed (or PIN disabled) — show main app
+}
 
 /// Screens that appear as overlays on top of the sidebar layout.
 enum OverlayScreen: Equatable {

@@ -184,6 +184,19 @@ class ChannelDetailResponse(BaseModel):
 
 # ── Pairing ─────────────────────────────────────────────────────
 
+class VerifyPinBody(BaseModel):
+    pin: str = Field(..., pattern=r"^\d{4,6}$")
+
+
+class PinStatusResponse(BaseModel):
+    pin_enabled: bool
+
+
+class VerifyPinResponse(BaseModel):
+    success: bool
+    session_token: Optional[str] = None
+
+
 class PairRequestBody(BaseModel):
     device_name: Optional[str] = Field(default=None, max_length=100)
 

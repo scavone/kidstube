@@ -33,6 +33,9 @@ enum Config {
     /// How long (in seconds) the time-remaining overlay stays visible.
     static let overlayDisplayDuration: TimeInterval = 5.0
 
+    /// PIN session timeout in seconds (30 minutes).
+    static let pinSessionTimeout: TimeInterval = 30 * 60
+
     /// Number of catalog items to fetch per page.
     static let catalogPageSize: Int = 24
 

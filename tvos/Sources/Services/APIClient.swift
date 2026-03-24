@@ -280,6 +280,19 @@ final class APIClient: Sendable {
         return try await get("/api/time-request/status", query: ["child_id": String(childId)])
     }
 
+    // MARK: - PIN Lock
+
+    /// Check if a child profile has PIN lock enabled.
+    func getPinStatus(childId: Int) async throws -> PinStatusResponse {
+        return try await get("/api/children/\(childId)/pin-status")
+    }
+
+    /// Verify a PIN for a child profile.
+    func verifyPin(childId: Int, pin: String) async throws -> PinVerifyResponse {
+        struct Body: Codable { let pin: String }
+        return try await post("/api/children/\(childId)/verify-pin", body: Body(pin: pin))
+    }
+
     // MARK: - Pairing (No Auth Required)
 
     /// Request a new pairing session. Called against a server URL before credentials exist.

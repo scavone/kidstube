@@ -111,6 +111,7 @@ class TelegramBot:
             CommandHandler("search", self._cmd_search),
             CommandHandler("freeday", self._cmd_freeday),
             CommandHandler("devices", self._cmd_devices),
+            CommandHandler("pin", self._cmd_pin),
             MessageHandler(filters.PHOTO & ~filters.COMMAND, self._handle_photo),
             CallbackQueryHandler(self._handle_callback),
         ]
@@ -801,6 +802,10 @@ class TelegramBot:
             "/watch [ChildName] — Watch activity (combined if omitted)\n"
             "/time [ChildName] — View/set time limits\n"
             "/freeday [ChildName] — Grant unlimited watch time today\n\n"
+            "<b>Security</b>\n"
+            "/pin [ChildName] — View PIN status\n"
+            "/pin [ChildName] set XXXX — Set/change PIN\n"
+            "/pin [ChildName] disable — Remove PIN\n\n"
             "<b>Devices</b>\n"
             "/devices — List paired devices\n\n"
             "<i>Child name can be omitted if only one child exists.</i>\n"
@@ -2104,6 +2109,107 @@ class TelegramBot:
             "\n".join(lines),
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
+        )
+
+    async def _cmd_pin(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Manage per-child PINs.
+
+        /pin [ChildName]          — View PIN status
+        /pin [ChildName] set XXXX — Set or change PIN (4-6 digits)
+        /pin [ChildName] disable  — Remove PIN
+        """
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        if not args:
+            # No args: show PIN status for all children (or single child)
+            children = self._all_children()
+            if not children:
+                await update.effective_message.reply_text("No child profiles exist yet.")
+                return
+            if len(children) == 1:
+                child = children[0]
+                has_pin = self.video_store.has_child_pin(child["id"])
+                status = "enabled ✅" if has_pin else "not set"
+                await update.effective_message.reply_text(
+                    f"<b>{_esc(child['name'])}</b> — PIN {status}\n\n"
+                    f"/pin {_esc(child['name'])} set XXXX — Set PIN\n"
+                    f"/pin {_esc(child['name'])} disable — Remove PIN",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            lines = ["<b>PIN Status</b>\n"]
+            for c in children:
+                has_pin = self.video_store.has_child_pin(c["id"])
+                status = "✅" if has_pin else "—"
+                lines.append(f"{c['avatar']} <b>{_esc(c['name'])}</b>: {status}")
+            lines.append("\n/pin ChildName set XXXX — Set PIN")
+            lines.append("/pin ChildName disable — Remove PIN")
+            await update.effective_message.reply_text(
+                "\n".join(lines), parse_mode=ParseMode.HTML,
+            )
+            return
+
+        # First arg is child name; figure out subcommand
+        # Could be: /pin Alex, /pin Alex set 1234, /pin Alex disable
+        child_name = args[0]
+        subcommand = args[1].lower() if len(args) > 1 else None
+
+        child = self._resolve_child(child_name)
+        if not child:
+            await update.effective_message.reply_text(
+                f"Child <b>{_esc(child_name)}</b> not found.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        cname = child["name"]
+        cid = child["id"]
+
+        if subcommand == "set":
+            if len(args) < 3:
+                await update.effective_message.reply_text(
+                    f"Usage: /pin {_esc(cname)} set XXXX (4–6 digits)",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            pin_value = args[2]
+            if not pin_value.isdigit() or not (4 <= len(pin_value) <= 6):
+                await update.effective_message.reply_text(
+                    "PIN must be 4–6 digits.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            self.video_store.set_child_pin(cid, pin_value)
+            await update.effective_message.reply_text(
+                f"PIN set for <b>{_esc(cname)}</b>. "
+                f"They'll need to enter it when selecting their profile on the TV.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        if subcommand == "disable":
+            if self.video_store.delete_child_pin(cid):
+                await update.effective_message.reply_text(
+                    f"PIN removed for <b>{_esc(cname)}</b>.",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await update.effective_message.reply_text(
+                    f"<b>{_esc(cname)}</b> doesn't have a PIN set.",
+                    parse_mode=ParseMode.HTML,
+                )
+            return
+
+        # No subcommand — show status for this child
+        has_pin = self.video_store.has_child_pin(cid)
+        status = "enabled ✅" if has_pin else "not set"
+        await update.effective_message.reply_text(
+            f"<b>{_esc(cname)}</b> — PIN {status}\n\n"
+            f"/pin {_esc(cname)} set XXXX — Set PIN\n"
+            f"/pin {_esc(cname)} disable — Remove PIN",
+            parse_mode=ParseMode.HTML,
         )
 
     async def _cmd_watch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

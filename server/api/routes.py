@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import time
@@ -51,6 +52,9 @@ from api.models import (
     PairConfirmBody,
     PairConfirmByPinBody,
     PairedDeviceResponse,
+    VerifyPinBody,
+    VerifyPinResponse,
+    PinStatusResponse,
 )
 from utils import (
     get_today_str,
@@ -194,6 +198,34 @@ async def get_avatar(child_id: int):
     if not path:
         raise HTTPException(status_code=404, detail="No avatar photo found")
     return FileResponse(path, media_type="image/jpeg")
+
+
+# ── Child PIN ──────────────────────────────────────────────────────
+
+@router.get("/children/{child_id}/pin-status")
+async def pin_status(child_id: int):
+    """Check whether a PIN is enabled for this child."""
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    return PinStatusResponse(pin_enabled=video_store.has_child_pin(child_id))
+
+
+@router.post("/children/{child_id}/verify-pin")
+async def verify_pin(child_id: int, body: VerifyPinBody):
+    """Verify a child's PIN. Returns a session token on success."""
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    if not video_store.has_child_pin(child_id):
+        raise HTTPException(status_code=400, detail="No PIN set for this child")
+
+    if not video_store.verify_child_pin(child_id, body.pin):
+        return VerifyPinResponse(success=False)
+
+    session_token = secrets.token_urlsafe(32)
+    return VerifyPinResponse(success=True, session_token=session_token)
 
 
 # ── Search ──────────────────────────────────────────────────────────

@@ -25,11 +25,13 @@
 		563CF91396F6F6024B6C8528 /* DeniedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49608DEA95FF6F9B4CDF350F /* DeniedView.swift */; };
 		56A45348E25627616ADC3B0E /* TimesUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667203D0B3FE03608D39B936 /* TimesUpView.swift */; };
 		65283B583777F1DD004D77BC /* PlayerOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F3BE9052C4FDA632DD4069 /* PlayerOverlayView.swift */; };
+		6587203F59A4963AC8A02B83 /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F61C53A7892B15EC8C6EDCBF /* SessionManager.swift */; };
 		65B6DE8014DAD54F77E03D77 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91E50BAFF4AE264514B58A7A /* ProfileView.swift */; };
 		6A1753DA0B3A9BD2DBB5399E /* HeartbeatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0C0283C43C28D71445B1A6 /* HeartbeatService.swift */; };
 		80458FD34D3DB055E6D926D7 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5695212EC6E0D40C9B9FC19 /* PairingView.swift */; };
 		8503682CCA8A48E192875195 /* APIResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = D069EDA4928ADB426A9F076B /* APIResponses.swift */; };
 		94EA5FAAD36DC39387B3D7ED /* ChildProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD7275D4A1ABCA1AAC35B4DE /* ChildProfile.swift */; };
+		94FEA85038A66E368E8C19AD /* PinModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D71B9F4643361AB236E95A /* PinModels.swift */; };
 		9AD252902E5191E32BCF38B6 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB544BFD4F2352C926B595AE /* HomeView.swift */; };
 		A17001AC40585E0EE2C2F5A7 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3471996C07E3CAAD366459B /* APIClientTests.swift */; };
 		A2C9C262F6CB2E75C5A91170 /* SearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47DB79B1757870A990CD2FB5 /* SearchResultsView.swift */; };
@@ -51,6 +53,7 @@
 		EB041E60133BA4686A67A192 /* HomeChannelRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE251AF5B2C13BFBE66694C2 /* HomeChannelRowView.swift */; };
 		EC032307074C64B960EE244B /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173969E802F4428A9502BE17 /* Config.swift */; };
 		EF9D27D511C696A81F5CFEBD /* ModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AED0E72654C49D2964B5EEBA /* ModelTests.swift */; };
+		F339C9B2A07332481146B905 /* PinEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 135DBAE77231F859082F5934 /* PinEntryView.swift */; };
 		FBBB03D0CBA04652D9924C7A /* SidebarSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 061CE96EAF4E04F9D28B95D4 /* SidebarSearchView.swift */; };
 		FC305D76AA0916D8E4370788 /* ConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23EB740E49D4C98D7F1F6154 /* ConfigTests.swift */; };
 		FD9BC9A4F342C5D856BD89C0 /* ProfilePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A69925AF8BB02374AE088A7 /* ProfilePickerView.swift */; };
@@ -72,8 +75,10 @@
 		0A69925AF8BB02374AE088A7 /* ProfilePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePickerView.swift; sourceTree = "<group>"; };
 		0F464945B8E38209FF085864 /* WindDownOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindDownOverlayView.swift; sourceTree = "<group>"; };
 		12AE1F33898D4887A839A194 /* ChannelsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelsListView.swift; sourceTree = "<group>"; };
+		135DBAE77231F859082F5934 /* PinEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinEntryView.swift; sourceTree = "<group>"; };
 		173969E802F4428A9502BE17 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		1981EE99523A9279B0F42B4D /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
+		20D71B9F4643361AB236E95A /* PinModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinModels.swift; sourceTree = "<group>"; };
 		23EB740E49D4C98D7F1F6154 /* ConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigTests.swift; sourceTree = "<group>"; };
 		24CA42E62DE19210493884B6 /* UIOverhaulTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIOverhaulTests.swift; sourceTree = "<group>"; };
 		36915EFA6900A27429E58E08 /* ChannelCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelCard.swift; sourceTree = "<group>"; };
@@ -113,6 +118,7 @@
 		ECFDE5EAFD513C8AFDDD9C48 /* TimeRequestService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeRequestService.swift; sourceTree = "<group>"; };
 		EE251AF5B2C13BFBE66694C2 /* HomeChannelRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeChannelRowView.swift; sourceTree = "<group>"; };
 		F08A735AD3FEA8E42FB39FEB /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		F61C53A7892B15EC8C6EDCBF /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
 		F67D53F92D9EEA7E80399AAF /* PairingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingTests.swift; sourceTree = "<group>"; };
 		F8FF22F8D0FB28ABC4FCAFE8 /* PendingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingView.swift; sourceTree = "<group>"; };
 		FCE7EDC4D8FC5F0A183F282C /* SearchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResult.swift; sourceTree = "<group>"; };
@@ -128,6 +134,7 @@
 				D46535337D9FAE6636F20D74 /* CredentialStore.swift */,
 				4E0C0283C43C28D71445B1A6 /* HeartbeatService.swift */,
 				B1292FDFFC0E989D2230F4BB /* KeychainService.swift */,
+				F61C53A7892B15EC8C6EDCBF /* SessionManager.swift */,
 				ECFDE5EAFD513C8AFDDD9C48 /* TimeRequestService.swift */,
 			);
 			path = Services;
@@ -200,6 +207,7 @@
 				CF31636188BD5E429B8F0E20 /* Home */,
 				82D3D4CC05CB46C8402F8F90 /* Pairing */,
 				77EB3316D98FD779C31BA0D7 /* Pending */,
+				EEE7E1E441529F9C403B76A6 /* PinEntry */,
 				5586627826B0527AA9D9AA96 /* Player */,
 				7E981CF4DECF9902EBC9A93F /* Profile */,
 				BBADEFF9DC48A32437EB01E1 /* ProfilePicker */,
@@ -226,6 +234,7 @@
 				FD7275D4A1ABCA1AAC35B4DE /* ChildProfile.swift */,
 				7E7C74844536CFEC626530FF /* HomeChannel.swift */,
 				62BA5F235C7113FD7ED24E37 /* PairingModels.swift */,
+				20D71B9F4643361AB236E95A /* PinModels.swift */,
 				FCE7EDC4D8FC5F0A183F282C /* SearchResult.swift */,
 				7CCC9AA078FCA1842183EB37 /* TimeStatus.swift */,
 				A6980148DEA0FB0DDEF91F68 /* Video.swift */,
@@ -332,6 +341,14 @@
 				24CA42E62DE19210493884B6 /* UIOverhaulTests.swift */,
 			);
 			path = Tests;
+			sourceTree = "<group>";
+		};
+		EEE7E1E441529F9C403B76A6 /* PinEntry */ = {
+			isa = PBXGroup;
+			children = (
+				135DBAE77231F859082F5934 /* PinEntryView.swift */,
+			);
+			path = PinEntry;
 			sourceTree = "<group>";
 		};
 		F15CED7B6234E152C4A524B4 /* Components */ = {
@@ -482,12 +499,15 @@
 				BDAEC63866CB25285BE0E2A2 /* PairingModels.swift in Sources */,
 				80458FD34D3DB055E6D926D7 /* PairingView.swift in Sources */,
 				B5E9DFD44417BACB803A19AF /* PendingView.swift in Sources */,
+				F339C9B2A07332481146B905 /* PinEntryView.swift in Sources */,
+				94FEA85038A66E368E8C19AD /* PinModels.swift in Sources */,
 				65283B583777F1DD004D77BC /* PlayerOverlayView.swift in Sources */,
 				009A8D29D3300149AF3AE3D8 /* PlayerView.swift in Sources */,
 				FD9BC9A4F342C5D856BD89C0 /* ProfilePickerView.swift in Sources */,
 				65B6DE8014DAD54F77E03D77 /* ProfileView.swift in Sources */,
 				46FD2CC7964399CC1E8EAD2E /* SearchResult.swift in Sources */,
 				A2C9C262F6CB2E75C5A91170 /* SearchResultsView.swift in Sources */,
+				6587203F59A4963AC8A02B83 /* SessionManager.swift in Sources */,
 				FBBB03D0CBA04652D9924C7A /* SidebarSearchView.swift in Sources */,
 				18F8961B9F85C5E053F00440 /* SidebarView.swift in Sources */,
 				0FBFBBE4462308DBBE42BDEB /* TimeBadge.swift in Sources */,

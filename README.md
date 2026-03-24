@@ -256,6 +256,14 @@ Once running, message your bot on Telegram. Commands:
 | `/time [Child]` | View/set time limits and schedule |
 | `/freeday [Child]` | Grant unlimited watch time for today |
 
+**Security**
+
+| Command | Description |
+|---|---|
+| `/pin [Child]` | View PIN status |
+| `/pin [Child] set XXXX` | Set or change PIN (4–6 digits) |
+| `/pin [Child] disable` | Remove PIN |
+
 **Devices**
 
 | Command | Description |
@@ -311,6 +319,8 @@ All `/api/*` endpoints require `Authorization: Bearer <BRG_API_KEY>` except avat
 | `/api/profiles/{id}` | DELETE | Delete child profile |
 | `/api/profiles/{id}/avatar` | POST | Upload photo avatar |
 | `/api/profiles/{id}/avatar` | GET | Serve photo avatar (public) |
+| `/api/children/{id}/pin-status` | GET | Check if PIN is enabled for a child |
+| `/api/children/{id}/verify-pin` | POST | Verify PIN, returns session token on success |
 | `/api/search` | GET | Search videos (params: `q`, `child_id`) |
 | `/api/request` | POST | Request video approval |
 | `/api/status/{video_id}` | GET | Poll approval status |

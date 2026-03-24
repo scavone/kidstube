@@ -1895,6 +1895,155 @@ class TestTimeRequestEndpoint:
         assert resp.json()["remaining"] == -3
 
 
+# ── Child PIN Endpoints ────────────────────────────────────────────
+
+class TestChildPinEndpoints:
+    """Tests for per-child PIN lock endpoints."""
+
+    def test_pin_status_no_pin(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        resp = client.get(f"/api/children/{child['id']}/pin-status", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json() == {"pin_enabled": False}
+
+    def test_pin_status_with_pin(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        resp = client.get(f"/api/children/{child['id']}/pin-status", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json() == {"pin_enabled": True}
+
+    def test_pin_status_child_not_found(self, client, auth_headers):
+        resp = client.get("/api/children/999/pin-status", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_verify_pin_success(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "1234"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert "session_token" in data
+        assert len(data["session_token"]) > 20
+
+    def test_verify_pin_wrong(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "5678"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert data["session_token"] is None
+
+    def test_verify_pin_no_pin_set(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "1234"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "No PIN set" in resp.json()["detail"]
+
+    def test_verify_pin_child_not_found(self, client, auth_headers):
+        resp = client.post(
+            "/api/children/999/verify-pin",
+            json={"pin": "1234"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_verify_pin_invalid_format(self, client, auth_headers, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        # Too short
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "12"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+
+        # Non-numeric
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "abcd"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_verify_pin_requires_auth(self, client, store):
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "1234"},
+        )
+        assert resp.status_code == 401
+
+    def test_pin_status_requires_auth(self, client, store):
+        child = store.add_child("Alex")
+        resp = client.get(f"/api/children/{child['id']}/pin-status")
+        assert resp.status_code == 401
+
+    def test_verify_pin_no_lockout(self, client, auth_headers, store):
+        """Multiple wrong PINs should not cause lockout."""
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        for _ in range(10):
+            resp = client.post(
+                f"/api/children/{child['id']}/verify-pin",
+                json={"pin": "0000"},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200
+            assert resp.json()["success"] is False
+
+        # Correct PIN still works
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "1234"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+    def test_verify_pin_six_digits(self, client, auth_headers, store):
+        """6-digit PINs should work."""
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "123456")
+        resp = client.post(
+            f"/api/children/{child['id']}/verify-pin",
+            json={"pin": "123456"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+    def test_session_tokens_unique(self, client, auth_headers, store):
+        """Each successful verification should return a unique session token."""
+        child = store.add_child("Alex")
+        store.set_child_pin(child["id"], "1234")
+        tokens = set()
+        for _ in range(5):
+            resp = client.post(
+                f"/api/children/{child['id']}/verify-pin",
+                json={"pin": "1234"},
+                headers=auth_headers,
+            )
+            tokens.add(resp.json()["session_token"])
+        assert len(tokens) == 5
+
+
 # ── Pairing Endpoints ──────────────────────────────────────────────
 
 class TestPairingEndpoints:
