@@ -203,6 +203,13 @@ cp -r /tmp/KidsTubeBuild/KidsTube.app /tmp/KidsTubeIPA/Payload/
 cd /tmp/KidsTubeIPA && zip -r ~/Desktop/KidsTube.ipa Payload/
 ```
 
+Clean up old build artifacts:
+
+```bash
+rm -R /tmp/KidsTubeBuild
+rm -R /tmp/KidsTubeIPA
+```
+
 Upload the resulting `KidsTube.ipa` to your sideloading tool.
 
 ### Sideloading with atvloadly
@@ -304,6 +311,7 @@ All `/api/*` endpoints require `Authorization: Bearer <BRG_API_KEY>` except avat
 | `/api/stream/{video_id}` | GET | Get playable stream URL |
 | `/api/catalog` | GET | Paginated approved video library |
 | `/api/channels` | GET | List allowed channels |
+| `/api/channels-home` | GET | Channels with latest video + banner/thumbnail (home screen) |
 | `/api/onboarding/starter-channels` | GET | Get curated starter channels |
 | `/api/onboarding/import` | POST | Import starter channels for a child |
 | `/api/watch-heartbeat` | POST | Report playback progress |

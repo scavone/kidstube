@@ -135,3 +135,27 @@ class TimeRequestResponse(BaseModel):
 class TimeRequestStatusResponse(BaseModel):
     status: str  # none, pending, granted, denied
     bonus_minutes: int = 0
+
+
+# ── Channels Home ────────────────────────────────────────────────
+
+class LatestVideoResponse(BaseModel):
+    video_id: str
+    title: str
+    thumbnail_url: Optional[str] = None
+    duration: Optional[int] = None
+    published_at: Optional[int] = None
+
+
+class ChannelHomeItem(BaseModel):
+    channel_name: str
+    channel_id: Optional[str] = None
+    handle: Optional[str] = None
+    category: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    latest_video: Optional[LatestVideoResponse] = None
+
+
+class ChannelsHomeResponse(BaseModel):
+    channels: list[ChannelHomeItem]

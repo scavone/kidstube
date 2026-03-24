@@ -41,6 +41,8 @@ from api.models import (
     TimeRequestBody,
     TimeRequestResponse,
     TimeRequestStatusResponse,
+    ChannelHomeItem,
+    ChannelsHomeResponse,
 )
 from utils import (
     get_today_str,
@@ -669,6 +671,49 @@ async def list_channels(child_id: int = Query(..., gt=0)):
         raise HTTPException(status_code=404, detail="Child not found")
     channels = video_store.get_channels(child_id, status="allowed")
     return {"channels": channels}
+
+
+# ── Channels Home (for tvOS home screen) ──────────────────────────
+
+@router.get("/channels-home")
+async def get_channels_home(child_id: int = Query(..., gt=0)):
+    """Return approved channels with latest video and channel metadata.
+
+    Each channel includes its avatar thumbnail, banner image (from Invidious),
+    and the most recent approved video. Ordered by most recently published video.
+    Powers the tvOS home screen channel row and featured banner.
+    """
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    channels_data = video_store.get_channels_with_latest_video(child_id)
+
+    # Fetch channel metadata from Invidious in parallel for channels with IDs
+    async def enrich_channel(ch: dict) -> ChannelHomeItem:
+        thumbnail_url = None
+        banner_url = None
+        if ch.get("channel_id"):
+            try:
+                info = await invidious_client.get_channel_info(ch["channel_id"])
+                if info:
+                    thumbnail_url = info.get("thumbnail_url")
+                    banner_url = info.get("banner_url")
+            except Exception:
+                logger.warning("Failed to fetch channel info for %s", ch["channel_id"])
+
+        return ChannelHomeItem(
+            channel_name=ch["channel_name"],
+            channel_id=ch.get("channel_id"),
+            handle=ch.get("handle"),
+            category=ch.get("category"),
+            thumbnail_url=thumbnail_url,
+            banner_url=banner_url,
+            latest_video=ch.get("latest_video"),
+        )
+
+    items = await asyncio.gather(*[enrich_channel(ch) for ch in channels_data])
+    return ChannelsHomeResponse(channels=list(items))
 
 
 # ── Channel Videos ─────────────────────────────────────────────────

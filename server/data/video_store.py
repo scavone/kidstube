@@ -641,7 +641,8 @@ class VideoStore:
                 where_parts.append("COALESCE(v.category, ch.category, 'fun') = ?")
                 params.append(category)
             if channel:
-                where_parts.append("v.channel_name = ? COLLATE NOCASE")
+                where_parts.append("(v.channel_name = ? COLLATE NOCASE OR v.channel_id = ?)")
+                params.append(channel)
                 params.append(channel)
 
             base_where = " AND ".join(where_parts)
@@ -999,6 +1000,54 @@ class VideoStore:
                     (child_id,),
                 )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_channels_with_latest_video(self, child_id: int) -> list[dict]:
+        """Get allowed channels for a child, each with their most recent approved video.
+
+        Returns a list of dicts ordered by most recently published video.
+        Each dict contains channel info plus a 'latest_video' sub-dict (or None).
+        """
+        with self._lock:
+            cursor = self.conn.execute(
+                """SELECT cc.channel_name, cc.channel_id, cc.handle, cc.category,
+                          v.video_id, v.title as video_title, v.thumbnail_url as video_thumbnail,
+                          v.duration as video_duration, v.published_at as video_published_at
+                   FROM child_channels cc
+                   LEFT JOIN (
+                       SELECT v2.channel_name, v2.video_id, v2.title, v2.thumbnail_url,
+                              v2.duration, v2.published_at,
+                              ROW_NUMBER() OVER (
+                                  PARTITION BY v2.channel_name
+                                  ORDER BY v2.published_at DESC NULLS LAST
+                              ) as rn
+                       FROM videos v2
+                       JOIN child_video_access cva ON v2.video_id = cva.video_id
+                       WHERE cva.child_id = ? AND cva.status = 'approved'
+                   ) v ON v.channel_name = cc.channel_name COLLATE NOCASE AND v.rn = 1
+                   WHERE cc.child_id = ? AND cc.status = 'allowed'
+                   ORDER BY v.published_at DESC NULLS LAST, cc.channel_name ASC""",
+                (child_id, child_id),
+            )
+            results = []
+            for row in cursor.fetchall():
+                channel = {
+                    "channel_name": row[0],
+                    "channel_id": row[1],
+                    "handle": row[2],
+                    "category": row[3],
+                }
+                if row[4]:  # video_id exists
+                    channel["latest_video"] = {
+                        "video_id": row[4],
+                        "title": row[5],
+                        "thumbnail_url": row[6],
+                        "duration": row[7],
+                        "published_at": row[8],
+                    }
+                else:
+                    channel["latest_video"] = None
+                results.append(channel)
+            return results
 
     def is_channel_allowed(self, child_id: int, name: str) -> bool:
         with self._lock:

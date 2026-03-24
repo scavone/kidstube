@@ -496,6 +496,99 @@ class TestChannels:
         assert not store.is_channel_allowed(sam["id"], "Fun Channel")
 
 
+class TestChannelsWithLatestVideo:
+    def test_empty_channels(self, store):
+        child = store.add_child("Alex")
+        result = store.get_channels_with_latest_video(child["id"])
+        assert result == []
+
+    def test_channel_with_no_videos(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Empty Channel", "allowed", channel_id="UCtest1234567890123456")
+        result = store.get_channels_with_latest_video(cid)
+        assert len(result) == 1
+        assert result[0]["channel_name"] == "Empty Channel"
+        assert result[0]["latest_video"] is None
+
+    def test_channel_with_latest_video(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Fun Channel", "allowed", channel_id="UCfun12345678901234567")
+        # Add videos with different published times
+        store.add_video("vid_old1234", "Old Video", "Fun Channel",
+                        channel_id="UCfun12345678901234567", published_at=1000)
+        store.add_video("vid_new1234", "New Video", "Fun Channel",
+                        channel_id="UCfun12345678901234567", published_at=2000)
+        store.request_video(cid, "vid_old1234")
+        store.request_video(cid, "vid_new1234")
+
+        result = store.get_channels_with_latest_video(cid)
+        assert len(result) == 1
+        assert result[0]["latest_video"]["video_id"] == "vid_new1234"
+        assert result[0]["latest_video"]["title"] == "New Video"
+        assert result[0]["latest_video"]["published_at"] == 2000
+
+    def test_ordered_by_latest_published(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Old Channel", "allowed", channel_id="UCold12345678901234567")
+        store.add_channel(cid, "New Channel", "allowed", channel_id="UCnew12345678901234567")
+
+        store.add_video("vid_old_ch01", "Old Ch Video", "Old Channel",
+                        channel_id="UCold12345678901234567", published_at=1000)
+        store.add_video("vid_new_ch01", "New Ch Video", "New Channel",
+                        channel_id="UCnew12345678901234567", published_at=3000)
+        store.request_video(cid, "vid_old_ch01")
+        store.request_video(cid, "vid_new_ch01")
+
+        result = store.get_channels_with_latest_video(cid)
+        assert len(result) == 2
+        assert result[0]["channel_name"] == "New Channel"
+        assert result[1]["channel_name"] == "Old Channel"
+
+    def test_excludes_blocked_channels(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Good Channel", "allowed")
+        store.add_channel(cid, "Bad Channel", "blocked")
+
+        result = store.get_channels_with_latest_video(cid)
+        assert len(result) == 1
+        assert result[0]["channel_name"] == "Good Channel"
+
+    def test_per_child_isolation(self, store):
+        alex = store.add_child("Alex")
+        sam = store.add_child("Sam")
+        store.add_channel(alex["id"], "Alex Channel", "allowed")
+        store.add_channel(sam["id"], "Sam Channel", "allowed")
+
+        alex_result = store.get_channels_with_latest_video(alex["id"])
+        sam_result = store.get_channels_with_latest_video(sam["id"])
+        assert len(alex_result) == 1
+        assert alex_result[0]["channel_name"] == "Alex Channel"
+        assert len(sam_result) == 1
+        assert sam_result[0]["channel_name"] == "Sam Channel"
+
+    def test_only_approved_videos_included(self, store):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Test Channel", "allowed", channel_id="UCtst12345678901234567")
+
+        store.add_video("vid_approv1", "Approved", "Test Channel",
+                        channel_id="UCtst12345678901234567", published_at=1000)
+        store.add_video("vid_denied1", "Denied", "Test Channel",
+                        channel_id="UCtst12345678901234567", published_at=2000)
+        store.request_video(cid, "vid_approv1")  # auto-approved (channel allowed)
+        store.request_video(cid, "vid_denied1")  # auto-approved
+        store.update_video_status(cid, "vid_denied1", "denied")
+
+        result = store.get_channels_with_latest_video(cid)
+        assert len(result) == 1
+        # Should pick the approved one, not the denied one
+        assert result[0]["latest_video"]["video_id"] == "vid_approv1"
+
+
 class TestWordFilters:
     def test_add_and_get(self, store):
         assert store.add_word_filter("badword")

@@ -34,7 +34,7 @@ enum WatchStatusFilter: String, CaseIterable {
     }
 }
 
-/// Main screen after profile selection: search bar + category filters + approved video catalog.
+/// Main screen after profile selection: featured banner, channel row, search, filters, and catalog grid.
 struct HomeView: View {
     let child: ChildProfile
     let refreshTrigger: Int
@@ -48,6 +48,7 @@ struct HomeView: View {
     @State private var columnCount = 4
     @State private var infoItem: VideoInfoItem?
     @State private var durationWarningVideo: Video?
+    @State private var focusedChannelId: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,52 +62,96 @@ struct HomeView: View {
                 ScheduleBanner(minutesRemaining: schedule.minutesRemaining, endTime: schedule.end)
             }
 
-            // Search field
-            searchField
+            // Main scrollable content
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Featured Banner — shows latest video from focused channel
+                        FeaturedBannerView(
+                            channel: viewModel.focusedChannel,
+                            onPlay: { video in
+                                let v = Video(
+                                    videoId: video.videoId,
+                                    title: video.title,
+                                    channelName: viewModel.focusedChannel?.channelName ?? ""
+                                )
+                                selectVideo(v)
+                            }
+                        )
+                        .animation(.easeInOut(duration: 0.35), value: viewModel.focusedChannel?.id)
+                        .padding(.top, 8)
 
-            // Category + Sort filter row
-            HStack(alignment: .top, spacing: 0) {
-                CategoryFilterView(
-                    selectedCategory: $viewModel.selectedCategory,
-                    onChange: { _ in
-                        Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
-                    }
-                )
+                        // Channel Row — horizontal scroll of approved channels
+                        HomeChannelRowView(
+                            channels: viewModel.homeChannels,
+                            focusedChannelId: focusedChannelId,
+                            onFocusChanged: { channelId in
+                                focusedChannelId = channelId
+                                viewModel.updateFocusedChannel(channelId: channelId)
+                            },
+                            onChannelSelected: { channel in
+                                // Filter catalog by channel_name (backend filters on channel_name)
+                                viewModel.selectedChannelFilter = channel.channelName
+                                Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                            }
+                        )
+                        .padding(.bottom, 4)
 
-                SortPickerView(
-                    selectedSort: $viewModel.selectedSort,
-                    onChange: { _ in
-                        Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
-                    }
-                )
-            }
-
-            // Watch status filter row
-            WatchStatusFilterView(
-                selectedFilter: $viewModel.selectedWatchFilter,
-                statusCounts: viewModel.statusCounts,
-                onChange: { _ in
-                    Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
-                }
-            )
-
-            // Catalog grid with optional alphabet rail
-            if viewModel.selectedSort == .title && !viewModel.videos.isEmpty {
-                HStack(spacing: 0) {
-                    catalogGrid
-                    AlphabetRailView(
-                        videos: viewModel.videos,
-                        onLetterSelected: { letter in
-                            viewModel.scrollToLetter = letter
+                        // Divider between hero section and catalog
+                        if !viewModel.homeChannels.isEmpty {
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.15))
+                                .frame(height: 1)
+                                .padding(.horizontal, 60)
                         }
-                    )
+
+                        // Search field
+                        searchField
+
+                        // Category + Sort filter row
+                        HStack(alignment: .top, spacing: 0) {
+                            CategoryFilterView(
+                                selectedCategory: $viewModel.selectedCategory,
+                                onChange: { _ in
+                                    Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                                }
+                            )
+
+                            SortPickerView(
+                                selectedSort: $viewModel.selectedSort,
+                                onChange: { _ in
+                                    Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                                }
+                            )
+                        }
+
+                        // Channel filter pill (shown when a channel is selected)
+                        if viewModel.selectedChannelFilter != nil {
+                            channelFilterPill
+                        }
+
+                        // Watch status filter row
+                        WatchStatusFilterView(
+                            selectedFilter: $viewModel.selectedWatchFilter,
+                            statusCounts: viewModel.statusCounts,
+                            onChange: { _ in
+                                Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                            }
+                        )
+
+                        // Catalog grid
+                        catalogContent(proxy: proxy)
+                    }
                 }
-            } else {
-                catalogGrid
             }
         }
         .task {
             await viewModel.loadInitialData(childId: child.id)
+            // Set initial focus to first channel
+            if let first = viewModel.homeChannels.first {
+                focusedChannelId = first.id
+                viewModel.updateFocusedChannel(channelId: first.id)
+            }
             // If outside schedule on initial load, immediately redirect
             if let schedule = viewModel.scheduleStatus, !schedule.allowed {
                 onOutsideSchedule(schedule.unlockTime)
@@ -115,6 +160,7 @@ struct HomeView: View {
         .onChange(of: refreshTrigger) {
             Task {
                 await viewModel.loadCatalog(childId: child.id, reset: true)
+                await viewModel.loadHomeChannels(childId: child.id)
                 await viewModel.refreshScheduleStatus(childId: child.id)
             }
         }
@@ -208,7 +254,35 @@ struct HomeView: View {
         .background(Color.gray.opacity(0.15))
         .cornerRadius(10)
         .padding(.horizontal, 60)
-        .padding(.bottom, 16)
+    }
+
+    // MARK: - Channel Filter Pill
+
+    private var channelFilterPill: some View {
+        HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                    .foregroundColor(.accentColor)
+                Text("Channel: \(viewModel.selectedChannelFilter ?? "")")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Button {
+                    viewModel.selectedChannelFilter = nil
+                    Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.accentColor.opacity(0.15))
+            .cornerRadius(8)
+
+            Spacer()
+        }
+        .padding(.horizontal, 60)
     }
 
     // MARK: - Catalog Grid
@@ -221,99 +295,112 @@ struct HomeView: View {
         }
     }
 
-    private var catalogGrid: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                if viewModel.isLoading && viewModel.videos.isEmpty {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .padding(60)
-                } else if viewModel.videos.isEmpty {
-                    emptyCatalog
-                } else {
-                    LazyVStack(spacing: 30) {
-                        ForEach(0..<videoRows.count, id: \.self) { rowIndex in
-                            let row = videoRows[rowIndex]
-                            HStack(spacing: 30) {
-                                ForEach(row) { video in
-                                    VideoCard(
-                                        title: video.title,
-                                        channelName: video.channelName,
-                                        thumbnailUrl: video.thumbnailUrl,
-                                        duration: video.formattedDuration,
-                                        tracksFocus: true,
-                                        progress: video.watchProgress,
-                                        isWatched: video.isWatched
-                                    )
-                                    .contextMenu {
-                                        Button {
-                                            infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
-                                        } label: {
-                                            Label("Video Info", systemImage: "info.circle")
-                                        }
-                                        Button {
-                                            Task { await viewModel.toggleWatchStatus(video: video, childId: child.id) }
-                                        } label: {
-                                            if video.isWatched {
-                                                Label("Mark as Unwatched", systemImage: "arrow.counterclockwise")
-                                            } else {
-                                                Label("Mark as Watched", systemImage: "checkmark.circle")
-                                            }
-                                        }
+    @ViewBuilder
+    private func catalogContent(proxy: ScrollViewProxy) -> some View {
+        if viewModel.selectedSort == .title && !viewModel.videos.isEmpty {
+            HStack(spacing: 0) {
+                catalogGrid(proxy: proxy)
+                AlphabetRailView(
+                    videos: viewModel.videos,
+                    onLetterSelected: { letter in
+                        viewModel.scrollToLetter = letter
+                    }
+                )
+            }
+        } else {
+            catalogGrid(proxy: proxy)
+        }
+    }
+
+    private func catalogGrid(proxy: ScrollViewProxy) -> some View {
+        Group {
+            if viewModel.isLoading && viewModel.videos.isEmpty {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .padding(60)
+            } else if viewModel.videos.isEmpty {
+                emptyCatalog
+            } else {
+                LazyVStack(spacing: 30) {
+                    ForEach(0..<videoRows.count, id: \.self) { rowIndex in
+                        let row = videoRows[rowIndex]
+                        HStack(spacing: 30) {
+                            ForEach(row) { video in
+                                VideoCard(
+                                    title: video.title,
+                                    channelName: video.channelName,
+                                    thumbnailUrl: video.thumbnailUrl,
+                                    duration: video.formattedDuration,
+                                    tracksFocus: true,
+                                    progress: video.watchProgress,
+                                    isWatched: video.isWatched
+                                )
+                                .contextMenu {
+                                    Button {
+                                        infoItem = VideoInfoItem(id: video.videoId, childId: child.id)
+                                    } label: {
+                                        Label("Video Info", systemImage: "info.circle")
                                     }
-                                    .onTapGesture {
-                                        selectVideo(video)
-                                    }
-                                    .onAppear {
-                                        // Infinite scroll: load more when near the end
-                                        if video.videoId == viewModel.videos.last?.videoId && viewModel.hasMore {
-                                            Task { await viewModel.loadCatalog(childId: child.id, reset: false) }
+                                    Button {
+                                        Task { await viewModel.toggleWatchStatus(video: video, childId: child.id) }
+                                    } label: {
+                                        if video.isWatched {
+                                            Label("Mark as Unwatched", systemImage: "arrow.counterclockwise")
+                                        } else {
+                                            Label("Mark as Watched", systemImage: "checkmark.circle")
                                         }
                                     }
                                 }
-                                Spacer(minLength: 0)
+                                .onTapGesture {
+                                    selectVideo(video)
+                                }
+                                .onAppear {
+                                    if video.videoId == viewModel.videos.last?.videoId && viewModel.hasMore {
+                                        Task { await viewModel.loadCatalog(childId: child.id, reset: false) }
+                                    }
+                                }
                             }
-                            .id("row-\(rowIndex)")
-                            .focusSection()
+                            Spacer(minLength: 0)
                         }
-                    }
-                    .padding(.horizontal, 60)
-                    .padding(.bottom, 40)
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.onAppear {
-                                let cols = max(1, Int((geo.size.width + 30) / (280 + 30)))
-                                if cols != columnCount { columnCount = cols }
-                            }
-                        }
-                    )
-
-                    if viewModel.isLoading {
-                        ProgressView()
-                            .padding()
+                        .id("row-\(rowIndex)")
+                        .focusSection()
                     }
                 }
+                .padding(.horizontal, 60)
+                .padding(.bottom, 40)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.onAppear {
+                            let cols = max(1, Int((geo.size.width + 30) / (280 + 30)))
+                            if cols != columnCount { columnCount = cols }
+                        }
+                    }
+                )
 
-                if let error = viewModel.errorMessage {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
+                if viewModel.isLoading {
+                    ProgressView()
                         .padding()
                 }
             }
-            .onChange(of: viewModel.scrollToLetter) {
-                guard let letter = viewModel.scrollToLetter else { return }
-                viewModel.scrollToLetter = nil
-                // Find the first row containing a video starting with this letter
-                let cols = max(1, columnCount)
-                if let videoIndex = viewModel.videos.firstIndex(where: {
-                    $0.title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
-                        .first?.uppercased() == letter
-                }) {
-                    let rowIndex = videoIndex / cols
-                    withAnimation {
-                        proxy.scrollTo("row-\(rowIndex)", anchor: .top)
-                    }
+
+            if let error = viewModel.errorMessage {
+                Text(error)
+                    .foregroundColor(.red)
+                    .font(.caption)
+                    .padding()
+            }
+        }
+        .onChange(of: viewModel.scrollToLetter) {
+            guard let letter = viewModel.scrollToLetter else { return }
+            viewModel.scrollToLetter = nil
+            let cols = max(1, columnCount)
+            if let videoIndex = viewModel.videos.firstIndex(where: {
+                $0.title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+                    .first?.uppercased() == letter
+            }) {
+                let rowIndex = videoIndex / cols
+                withAnimation {
+                    proxy.scrollTo("row-\(rowIndex)", anchor: .top)
                 }
             }
         }
@@ -520,7 +607,7 @@ struct AlphabetRailView: View {
     let videos: [Video]
     let onLetterSelected: (String) -> Void
 
-    private let letters = (65...90).map { String(UnicodeScalar($0)) } // A–Z
+    private let letters = (65...90).map { String(UnicodeScalar($0)) } // A-Z
 
     private var availableLetters: Set<String> {
         Set(videos.compactMap {
@@ -558,6 +645,9 @@ struct AlphabetRailView: View {
 @MainActor
 final class HomeViewModel: ObservableObject {
     @Published var videos: [Video] = []
+    @Published var homeChannels: [HomeChannel] = []
+    @Published var focusedChannel: HomeChannel?
+    @Published var selectedChannelFilter: String?
     @Published var timeStatus: TimeStatus?
     @Published var scheduleStatus: ScheduleStatus?
     @Published var selectedCategory: String?
@@ -581,8 +671,29 @@ final class HomeViewModel: ObservableObject {
         async let catalogTask: () = loadCatalog(childId: childId, reset: true)
         async let timeTask: () = refreshTimeStatus(childId: childId)
         async let scheduleTask: () = refreshScheduleStatus(childId: childId)
-        _ = await (catalogTask, timeTask, scheduleTask)
+        async let channelsTask: () = loadHomeChannels(childId: childId)
+        _ = await (catalogTask, timeTask, scheduleTask, channelsTask)
         startScheduleRefresh(childId: childId)
+    }
+
+    func loadHomeChannels(childId: Int) async {
+        do {
+            homeChannels = try await apiClient.getHomeChannels(childId: childId)
+            // Default to first channel if nothing is focused
+            if focusedChannel == nil, let first = homeChannels.first {
+                focusedChannel = first
+            }
+        } catch {
+            // Non-critical — channel row and banner just won't show
+        }
+    }
+
+    func updateFocusedChannel(channelId: String) {
+        if let channel = homeChannels.first(where: { $0.id == channelId }) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                focusedChannel = channel
+            }
+        }
     }
 
     func loadCatalog(childId: Int, reset: Bool) async {
@@ -596,6 +707,7 @@ final class HomeViewModel: ObservableObject {
             let response = try await apiClient.getCatalog(
                 childId: childId,
                 category: selectedCategory,
+                channel: selectedChannelFilter,
                 sortBy: selectedSort.rawValue,
                 watchStatus: selectedWatchFilter.rawValue,
                 offset: offset

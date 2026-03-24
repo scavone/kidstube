@@ -508,6 +508,36 @@ class TestCatalogEndpoint:
         assert data["total"] == 5
 
 
+    def test_catalog_filter_by_channel_id(self, client, auth_headers, store):
+        """Filtering catalog by channel_id (UC...) should work like channel_name."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Fun Channel", "allowed", channel_id="UCfun12345678901234567")
+        store.add_video("vid_fun12345", "Fun Video", "Fun Channel",
+                        channel_id="UCfun12345678901234567")
+        store.add_video("vid_oth12345", "Other Video", "Other Channel",
+                        channel_id="UCoth12345678901234567")
+        store.request_video(cid, "vid_fun12345")
+        store.request_video(cid, "vid_oth12345")
+        store.update_video_status(cid, "vid_oth12345", "approved")
+
+        # Filter by channel_id
+        resp = client.get(
+            f"/api/catalog?child_id={cid}&channel=UCfun12345678901234567",
+            headers=auth_headers,
+        )
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["videos"][0]["video_id"] == "vid_fun12345"
+
+        # Filter by channel_name still works
+        resp2 = client.get(
+            f"/api/catalog?child_id={cid}&channel=Fun+Channel",
+            headers=auth_headers,
+        )
+        assert resp2.json()["total"] == 1
+
+
 class TestHeartbeatEndpoint:
     def test_heartbeat_records_seconds(self, client, auth_headers, store):
         child = store.add_child("Alex")
@@ -627,6 +657,84 @@ class TestChannelsEndpoint:
         assert resp.status_code == 200
         channels = resp.json()["channels"]
         assert len(channels) == 2  # Only allowed channels
+
+
+class TestChannelsHomeEndpoint:
+    """Tests for GET /api/channels-home — channel row + featured banner data."""
+
+    def test_child_not_found(self, client, auth_headers):
+        resp = client.get("/api/channels-home?child_id=999", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_empty_channels(self, client, auth_headers, store):
+        store.add_child("Alex")
+        resp = client.get("/api/channels-home?child_id=1", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["channels"] == []
+
+    def test_returns_channels_with_metadata(self, client, auth_headers, store, mock_invidious):
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Fun Channel", "allowed", channel_id="UCfun12345678901234567")
+        store.add_video("vid_test1234", "Test Video", "Fun Channel",
+                        channel_id="UCfun12345678901234567",
+                        thumbnail_url="http://img/thumb.jpg",
+                        duration=300, published_at=1000)
+        store.request_video(cid, "vid_test1234")
+
+        mock_channel_info = {
+            "channel_id": "UCfun12345678901234567",
+            "name": "Fun Channel",
+            "handle": "@funchannel",
+            "subscriber_count": 1000,
+            "description": "A fun channel",
+            "thumbnail_url": "https://yt.com/avatar.jpg",
+            "banner_url": "https://yt.com/banner.jpg",
+        }
+
+        with patch.object(mock_invidious, "get_channel_info",
+                          new_callable=AsyncMock, return_value=mock_channel_info):
+            resp = client.get(f"/api/channels-home?child_id={cid}", headers=auth_headers)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["channels"]) == 1
+        ch = data["channels"][0]
+        assert ch["channel_name"] == "Fun Channel"
+        assert ch["channel_id"] == "UCfun12345678901234567"
+        assert ch["thumbnail_url"] == "https://yt.com/avatar.jpg"
+        assert ch["banner_url"] == "https://yt.com/banner.jpg"
+        assert ch["latest_video"]["video_id"] == "vid_test1234"
+        assert ch["latest_video"]["title"] == "Test Video"
+
+    def test_channel_without_id_has_no_metadata(self, client, auth_headers, store, mock_invidious):
+        """Channels without channel_id should still appear but without Invidious metadata."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Local Channel", "allowed")
+
+        resp = client.get(f"/api/channels-home?child_id={cid}", headers=auth_headers)
+        assert resp.status_code == 200
+        ch = resp.json()["channels"][0]
+        assert ch["channel_name"] == "Local Channel"
+        assert ch["thumbnail_url"] is None
+        assert ch["banner_url"] is None
+
+    def test_invidious_failure_graceful(self, client, auth_headers, store, mock_invidious):
+        """If Invidious fails for a channel, the endpoint still returns data without metadata."""
+        child = store.add_child("Alex")
+        cid = child["id"]
+        store.add_channel(cid, "Test Channel", "allowed", channel_id="UCtst12345678901234567")
+
+        with patch.object(mock_invidious, "get_channel_info",
+                          new_callable=AsyncMock, side_effect=Exception("Connection error")):
+            resp = client.get(f"/api/channels-home?child_id={cid}", headers=auth_headers)
+
+        assert resp.status_code == 200
+        ch = resp.json()["channels"][0]
+        assert ch["channel_name"] == "Test Channel"
+        assert ch["thumbnail_url"] is None
+        assert ch["banner_url"] is None
 
 
 class TestFamilyFriendlyFilter:

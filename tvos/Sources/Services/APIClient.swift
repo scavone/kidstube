@@ -175,6 +175,16 @@ final class APIClient: Sendable {
         return response.channels
     }
 
+    /// Fetch channels with their latest video for the home screen.
+    /// Channels are ordered by most recently published video (newest first).
+    func getHomeChannels(childId: Int) async throws -> [HomeChannel] {
+        let response: HomeChannelsResponse = try await get(
+            "/api/channels-home",
+            query: ["child_id": String(childId)]
+        )
+        return response.channels
+    }
+
     // MARK: - Watch Position (Resume Playback)
 
     /// Save the current playback position for a child+video pair.

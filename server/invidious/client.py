@@ -269,12 +269,44 @@ class InvidiousClient:
                 raise
             data = resp.json()
 
+        # Extract channel avatar thumbnail
+        thumbnails = data.get("authorThumbnails", [])
+        thumbnail_url = None
+        for thumb in thumbnails:
+            width = thumb.get("width", 0)
+            if 100 <= width <= 200:
+                thumbnail_url = thumb.get("url", "")
+                break
+        if not thumbnail_url and thumbnails:
+            thumbnail_url = thumbnails[-1].get("url", "")
+        if thumbnail_url and thumbnail_url.startswith("//"):
+            thumbnail_url = f"https:{thumbnail_url}"
+        elif thumbnail_url and thumbnail_url.startswith("/"):
+            thumbnail_url = f"{self.base_url}{thumbnail_url}"
+
+        # Extract channel banner image
+        banners = data.get("authorBanners", [])
+        banner_url = None
+        for banner in banners:
+            width = banner.get("width", 0)
+            if 1000 <= width <= 2000:
+                banner_url = banner.get("url", "")
+                break
+        if not banner_url and banners:
+            banner_url = banners[-1].get("url", "")
+        if banner_url and banner_url.startswith("//"):
+            banner_url = f"https:{banner_url}"
+        elif banner_url and banner_url.startswith("/"):
+            banner_url = f"{self.base_url}{banner_url}"
+
         return {
             "channel_id": data.get("authorId", channel_id),
             "name": data.get("author", ""),
             "handle": data.get("authorUrl", "").rstrip("/").split("/")[-1] or None,
             "subscriber_count": data.get("subCount", 0),
             "description": data.get("description", ""),
+            "thumbnail_url": thumbnail_url,
+            "banner_url": banner_url,
         }
 
     async def resolve_channel_by_handle(self, handle: str) -> Optional[dict]:
