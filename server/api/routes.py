@@ -5,6 +5,7 @@ The tvOS app passes child_id on every request to identify the active profile.
 """
 
 import asyncio
+import html as html_mod
 import logging
 import math
 import os
@@ -52,6 +53,7 @@ from api.models import (
     PairRequestBody,
     PairRequestResponse,
     PairStatusResponse,
+    PairApproveWebBody,
     PairConfirmBody,
     PairConfirmByPinBody,
     PairedDeviceResponse,
@@ -103,6 +105,7 @@ notify_channel_callback = None
 notify_time_expired_callback = None
 notify_time_request_callback = None
 notify_pairing_callback = None
+telegram_bot_instance = None
 config = None
 
 # Heartbeat dedup: (child_id, video_id) -> monotonic timestamp
@@ -141,10 +144,11 @@ _HLS_SEGMENT_SECONDS = 2  # Short segments for faster initial playback
 
 def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None,
           notify_time_expired_cb=None, notify_time_request_cb=None,
-          notify_pairing_cb=None):
+          notify_pairing_cb=None, bot=None):
     """Called by main.py to inject dependencies."""
     global video_store, invidious_client, config, notify_callback, notify_channel_callback
     global notify_time_expired_callback, notify_time_request_callback, notify_pairing_callback
+    global telegram_bot_instance
     video_store = store
     invidious_client = inv_client
     config = cfg
@@ -153,6 +157,7 @@ def setup(store, inv_client, cfg, notify_cb=None, notify_channel_cb=None,
     notify_time_expired_callback = notify_time_expired_cb
     notify_time_request_callback = notify_time_request_cb
     notify_pairing_callback = notify_pairing_cb
+    telegram_bot_instance = bot
     # Reset rate limiter state (important for test isolation)
     limiter.reset()
 
@@ -1645,6 +1650,7 @@ async def pair_approve_page(token: str, request: Request):
         return HTMLResponse("<h2>This pairing request was denied.</h2>")
 
     pin = session.get("pin", "")
+    device_name = html_mod.escape(session.get("device_name") or "Apple TV")
 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html><head>
@@ -1659,7 +1665,11 @@ async def pair_approve_page(token: str, request: Request):
   .pin {{ font-size: 32px; font-weight: bold; letter-spacing: 8px;
           font-family: monospace; margin: 16px 0; color: #4361ee; }}
   .label {{ color: #666; font-size: 14px; }}
-  .buttons {{ display: flex; gap: 12px; margin-top: 24px; }}
+  input[type=text] {{ width: 100%; box-sizing: border-box; padding: 10px 14px;
+                      border: 1.5px solid #ddd; border-radius: 8px; font-size: 16px;
+                      margin: 8px 0 16px; text-align: center; }}
+  input[type=text]:focus {{ outline: none; border-color: #4361ee; }}
+  .buttons {{ display: flex; gap: 12px; margin-top: 8px; }}
   button {{ flex: 1; padding: 14px; border: none; border-radius: 10px;
             font-size: 16px; font-weight: 600; cursor: pointer; }}
   .approve {{ background: #2dc653; color: white; }}
@@ -1676,6 +1686,8 @@ async def pair_approve_page(token: str, request: Request):
   <p class="label">A device is requesting access to KidsTube</p>
   <div class="pin">{pin}</div>
   <p class="label">Verify this PIN matches the TV screen</p>
+  <p class="label" style="margin-top:20px">Device name</p>
+  <input type="text" id="device_name" value="{device_name}" maxlength="100">
   <div class="buttons" id="buttons">
     <button class="deny" onclick="respond('deny')">Deny</button>
     <button class="approve" onclick="respond('approve')">Approve</button>
@@ -1686,12 +1698,19 @@ async def pair_approve_page(token: str, request: Request):
 async function respond(action) {{
   document.getElementById('buttons').style.display = 'none';
   var resultDiv = document.getElementById('result');
+  var opts = {{method: 'POST'}};
+  if (action === 'approve') {{
+    var name = document.getElementById('device_name').value.trim();
+    opts.headers = {{'Content-Type': 'application/json'}};
+    opts.body = JSON.stringify({{device_name: name || null}});
+  }}
   try {{
-    var resp = await fetch('/api/pair/' + action + '-web/{token}', {{method: 'POST'}});
+    var resp = await fetch('/api/pair/' + action + '-web/{token}', opts);
     var msg = document.createElement('div');
     if (action === 'approve' && resp.ok) {{
+      var data = await resp.json();
       msg.className = 'done ok';
-      msg.textContent = 'Device paired successfully!';
+      msg.textContent = (data.device_name || 'Device') + ' paired successfully!';
     }} else if (action === 'deny') {{
       msg.className = 'done no';
       msg.textContent = 'Pairing denied.';
@@ -1714,7 +1733,7 @@ async function respond(action) {{
 
 
 @public_router.post("/pair/approve-web/{token}")
-async def pair_approve_web(token: str):
+async def pair_approve_web(token: str, body: PairApproveWebBody = None):
     """Approve pairing from the web approval page. No auth — token is the secret."""
     session = video_store.get_pairing_session(token)
     if not session:
@@ -1722,11 +1741,23 @@ async def pair_approve_web(token: str):
     if session["status"] == "confirmed":
         raise HTTPException(status_code=409, detail="Already paired")
 
-    device = video_store.confirm_pairing(token)
+    device_name = (body.device_name if body else None)
+    device = video_store.confirm_pairing(token, device_name=device_name)
     if not device:
         raise HTTPException(status_code=410, detail="Pairing session expired")
 
     video_store.set_pairing_device_key(token, device["api_key"])
+
+    # Edit the Telegram notification to remove buttons
+    if telegram_bot_instance:
+        try:
+            await telegram_bot_instance.edit_pairing_message(
+                token,
+                f"Device <b>{html_mod.escape(device['device_name'])}</b> paired successfully.",
+            )
+        except Exception:
+            logger.warning("Failed to edit pairing Telegram message", exc_info=True)
+
     return {"status": "confirmed", "device_name": device["device_name"]}
 
 
@@ -1740,6 +1771,17 @@ async def pair_deny_web(token: str):
         raise HTTPException(status_code=409, detail="Session already resolved")
 
     video_store.deny_pairing(token)
+
+    # Edit the Telegram notification to remove buttons
+    if telegram_bot_instance:
+        try:
+            await telegram_bot_instance.edit_pairing_message(
+                token,
+                "Pairing request was denied.",
+            )
+        except Exception:
+            logger.warning("Failed to edit pairing Telegram message", exc_info=True)
+
     return {"status": "denied"}
 
 

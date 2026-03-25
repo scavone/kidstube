@@ -232,6 +232,10 @@ class PairStatusResponse(BaseModel):
     server_url: Optional[str] = None
 
 
+class PairApproveWebBody(BaseModel):
+    device_name: Optional[str] = Field(default=None, max_length=100)
+
+
 class PairConfirmBody(BaseModel):
     device_name: Optional[str] = Field(default=None, max_length=100)
 

@@ -309,13 +309,14 @@ final class APIClient: Sendable {
 
     /// Request a new pairing session. Called against a server URL before credentials exist.
     /// Uses an unauthenticated request since the device has no API key yet.
-    func requestPairing() async throws -> PairRequestResponse {
+    func requestPairing(deviceName: String = "Apple TV") async throws -> PairRequestResponse {
         let url = try buildURL(path: "/api/pair/request")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // No auth — pairing endpoint is public
-        request.httpBody = try JSONEncoder().encode(["device_name": "Apple TV"])
+        let name = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.httpBody = try JSONEncoder().encode(["device_name": name.isEmpty ? "Apple TV" : name])
         return try await execute(request)
     }
 

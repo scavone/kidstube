@@ -10,6 +10,7 @@ struct PairingView: View {
 
     @StateObject private var viewModel = PairingViewModel()
     @FocusState private var isURLFieldFocused: Bool
+    @FocusState private var isNameFieldFocused: Bool
 
     var body: some View {
         ZStack {
@@ -76,6 +77,21 @@ struct PairingView: View {
                     .focused($isURLFieldFocused)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                    .frame(maxWidth: 600)
+
+                TextField("Apple TV", text: $viewModel.deviceName)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(AppTheme.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(AppTheme.border, lineWidth: 1)
+                    )
+                    .focused($isNameFieldFocused)
                     .frame(maxWidth: 600)
             }
 
@@ -279,6 +295,7 @@ enum PairingStep: Equatable {
 final class PairingViewModel: ObservableObject {
     @Published var step: PairingStep = .enterURL
     @Published var serverURL: String = ""
+    @Published var deviceName: String = ""
     @Published var pin: String?
     @Published var qrCodeImage: UIImage?
     @Published var isConnecting = false
@@ -308,7 +325,7 @@ final class PairingViewModel: ObservableObject {
         let apiClient = APIClient(baseURL: url, apiKey: "")
 
         do {
-            let response = try await apiClient.requestPairing()
+            let response = try await apiClient.requestPairing(deviceName: deviceName)
 
             serverURL = url
             pairingToken = response.token
@@ -404,7 +421,7 @@ final class PairingViewModel: ObservableObject {
         let apiClient = APIClient(baseURL: serverURL, apiKey: "")
 
         do {
-            let response = try await apiClient.requestPairing()
+            let response = try await apiClient.requestPairing(deviceName: deviceName)
             pairingToken = response.token
             pin = response.pin
             qrCodeImage = generateQRCode(from: "\(serverURL)/api/pair/approve/\(response.token)")

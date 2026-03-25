@@ -419,3 +419,201 @@ class TestDeviceManagement:
         """Device revocation requires auth."""
         resp = client.delete("/api/devices/1")
         assert resp.status_code == 401
+
+
+# ── Web Approval Flow ─────────────────────────────────────────────
+
+class TestWebApprovalFlow:
+    """Tests for QR-code web approval page and API endpoints."""
+
+    def test_approve_web_page_renders(self, client):
+        """GET /api/pair/approve/{token} returns the HTML approval page."""
+        create_resp = client.post("/api/pair/request", json={"device_name": "Bedroom TV"})
+        token = create_resp.json()["token"]
+
+        resp = client.get(f"/api/pair/approve/{token}")
+        assert resp.status_code == 200
+        assert "Bedroom TV" in resp.text
+        assert 'id="device_name"' in resp.text  # device name input present
+
+    def test_approve_web_page_prefills_device_name(self, client):
+        """The web page pre-fills the device name input from the session."""
+        create_resp = client.post("/api/pair/request", json={"device_name": "Living Room"})
+        token = create_resp.json()["token"]
+
+        resp = client.get(f"/api/pair/approve/{token}")
+        assert "Living Room" in resp.text
+
+    def test_approve_web_page_defaults_to_apple_tv(self, client):
+        """When no device_name is provided, the input defaults to 'Apple TV'."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+
+        resp = client.get(f"/api/pair/approve/{token}")
+        assert "Apple TV" in resp.text
+
+    def test_approve_web_without_body(self, client):
+        """POST /api/pair/approve-web/{token} works without a body (uses session name)."""
+        create_resp = client.post("/api/pair/request", json={"device_name": "Original Name"})
+        token = create_resp.json()["token"]
+
+        resp = client.post(f"/api/pair/approve-web/{token}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "confirmed"
+        assert data["device_name"] == "Original Name"
+
+    def test_approve_web_with_device_name(self, client):
+        """POST /api/pair/approve-web/{token} accepts device_name override."""
+        create_resp = client.post("/api/pair/request", json={"device_name": "Apple TV"})
+        token = create_resp.json()["token"]
+
+        resp = client.post(
+            f"/api/pair/approve-web/{token}",
+            json={"device_name": "Bedroom TV"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "confirmed"
+        assert data["device_name"] == "Bedroom TV"
+
+    def test_approve_web_device_name_persisted(self, client, store, auth_headers):
+        """Device name override from web approval is stored in paired_devices."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+
+        client.post(
+            f"/api/pair/approve-web/{token}",
+            json={"device_name": "Kitchen TV"},
+        )
+
+        devices = store.get_paired_devices()
+        assert any(d["device_name"] == "Kitchen TV" for d in devices)
+
+    def test_approve_web_null_device_name_uses_session(self, client):
+        """Sending device_name: null falls back to the session's device name."""
+        create_resp = client.post("/api/pair/request", json={"device_name": "Session Name"})
+        token = create_resp.json()["token"]
+
+        resp = client.post(
+            f"/api/pair/approve-web/{token}",
+            json={"device_name": None},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["device_name"] == "Session Name"
+
+    def test_approve_web_already_paired_returns_409(self, client):
+        """Approving an already-confirmed session returns 409."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+
+        client.post(f"/api/pair/approve-web/{token}")
+        resp = client.post(f"/api/pair/approve-web/{token}")
+        assert resp.status_code == 409
+
+    def test_approve_web_unknown_token_returns_404(self, client):
+        """Unknown token returns 404."""
+        resp = client.post("/api/pair/approve-web/nonexistent-token")
+        assert resp.status_code == 404
+
+    def test_deny_web(self, client):
+        """POST /api/pair/deny-web/{token} denies the session."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+
+        resp = client.post(f"/api/pair/deny-web/{token}")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "denied"
+
+    def test_deny_web_updates_status(self, client, store):
+        """After denial, the session status is 'denied' in DB."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+
+        client.post(f"/api/pair/deny-web/{token}")
+
+        session = store.get_pairing_session(token)
+        assert session["status"] == "denied"
+
+    def test_deny_web_already_resolved_returns_409(self, client):
+        """Denying an already-resolved session returns 409."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+
+        client.post(f"/api/pair/deny-web/{token}")
+        resp = client.post(f"/api/pair/deny-web/{token}")
+        assert resp.status_code == 409
+
+    def test_deny_web_unknown_token_returns_404(self, client):
+        """Unknown token returns 404."""
+        resp = client.post("/api/pair/deny-web/nonexistent-token")
+        assert resp.status_code == 404
+
+
+# ── Pairing Message ID Storage ────────────────────────────────────
+
+class TestPairingMessageIds:
+    """Tests for Telegram message ID storage on pairing sessions."""
+
+    def test_set_and_get_pairing_message_ids(self, store):
+        """set_pairing_message_ids stores chat_id and message_id on the session."""
+        session = store.create_pairing_session(device_name="Test TV")
+        token = session["token"]
+
+        store.set_pairing_message_ids(token, chat_id=12345, message_id=67890)
+
+        retrieved = store.get_pairing_session(token)
+        assert retrieved["chat_id"] == 12345
+        assert retrieved["message_id"] == 67890
+
+    def test_message_ids_default_null(self, store):
+        """Newly created pairing sessions have null chat_id and message_id."""
+        session = store.create_pairing_session()
+        token = session["token"]
+
+        retrieved = store.get_pairing_session(token)
+        assert retrieved.get("chat_id") is None
+        assert retrieved.get("message_id") is None
+
+    def test_set_message_ids_unknown_token(self, store):
+        """Setting message IDs for an unknown token is a no-op (no error)."""
+        store.set_pairing_message_ids("nonexistent", chat_id=1, message_id=2)  # should not raise
+
+
+# ── Device Renaming ───────────────────────────────────────────────
+
+class TestDeviceRenaming:
+    """Tests for renaming paired devices."""
+
+    def test_rename_device(self, client, store, auth_headers):
+        """rename_device updates the device name."""
+        create_resp = client.post("/api/pair/request", json={"device_name": "Old Name"})
+        token = create_resp.json()["token"]
+        client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+
+        devices = store.get_paired_devices()
+        device_id = devices[0]["id"]
+
+        result = store.rename_device(device_id, "New Name")
+        assert result is True
+
+        devices = store.get_paired_devices()
+        assert devices[0]["device_name"] == "New Name"
+
+    def test_rename_nonexistent_device_returns_false(self, store):
+        """rename_device returns False for unknown device IDs."""
+        result = store.rename_device(9999, "Any Name")
+        assert result is False
+
+    def test_rename_revoked_device_returns_false(self, client, store, auth_headers):
+        """rename_device returns False for already-revoked devices."""
+        create_resp = client.post("/api/pair/request")
+        token = create_resp.json()["token"]
+        client.post(f"/api/pair/confirm/{token}", headers=auth_headers)
+
+        devices = store.get_paired_devices()
+        device_id = devices[0]["id"]
+
+        store.revoke_device(device_id)
+        result = store.rename_device(device_id, "New Name")
+        assert result is False

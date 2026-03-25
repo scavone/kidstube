@@ -64,6 +64,7 @@ def create_app(cfg=None) -> FastAPI:
         notify_time_expired_cb=notify_time_expired_cb,
         notify_time_request_cb=notify_time_request_cb,
         notify_pairing_cb=notify_pairing_cb,
+        bot=bot,
     )
 
     @asynccontextmanager

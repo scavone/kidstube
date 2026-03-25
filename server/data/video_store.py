@@ -240,6 +240,14 @@ class VideoStore:
             )
             self.conn.commit()
 
+        # Add chat_id/message_id columns to pairing_sessions if missing
+        cursor = self.conn.execute("PRAGMA table_info(pairing_sessions)")
+        ps_columns = {row[1] for row in cursor.fetchall()}
+        if "chat_id" not in ps_columns:
+            self.conn.execute("ALTER TABLE pairing_sessions ADD COLUMN chat_id INTEGER")
+            self.conn.execute("ALTER TABLE pairing_sessions ADD COLUMN message_id INTEGER")
+            self.conn.commit()
+
         # Migrate global channels -> per-child channels for existing databases.
         # Copy any global channel entries that don't yet exist in child_channels
         # for each child, then leave the global table intact (unused going forward).
@@ -1649,6 +1657,15 @@ class VideoStore:
             )
             self.conn.commit()
 
+    def set_pairing_message_ids(self, token: str, chat_id: int, message_id: int) -> None:
+        """Store the Telegram chat_id and message_id for a pairing session."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE pairing_sessions SET chat_id = ?, message_id = ? WHERE token = ?",
+                (chat_id, message_id, token),
+            )
+            self.conn.commit()
+
     def get_paired_devices(self) -> list[dict]:
         """List all paired devices."""
         with self._lock:
@@ -1663,6 +1680,16 @@ class VideoStore:
             cursor = self.conn.execute(
                 "UPDATE paired_devices SET is_active = 0 WHERE id = ? AND is_active = 1",
                 (device_id,),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def rename_device(self, device_id: int, name: str) -> bool:
+        """Rename an active paired device. Returns True if found."""
+        with self._lock:
+            cursor = self.conn.execute(
+                "UPDATE paired_devices SET device_name = ? WHERE id = ? AND is_active = 1",
+                (name, device_id),
             )
             self.conn.commit()
             return cursor.rowcount > 0

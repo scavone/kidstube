@@ -112,6 +112,7 @@ class TelegramBot:
             CommandHandler("search", self._cmd_search),
             CommandHandler("freeday", self._cmd_freeday),
             CommandHandler("devices", self._cmd_devices),
+            CommandHandler("device", self._cmd_device),
             CommandHandler("pin", self._cmd_pin),
             CommandHandler("setup", self._cmd_setup),
             CommandHandler("sessions", self._cmd_sessions),
@@ -391,12 +392,34 @@ class TelegramBot:
             [InlineKeyboardButton("Deny", callback_data=f"pair_deny:{token}")],
         ])
 
-        await self._app.bot.send_message(
+        msg = await self._app.bot.send_message(
             chat_id=self.admin_chat_id,
             text=text,
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
+        self.video_store.set_pairing_message_ids(token, msg.chat_id, msg.message_id)
+
+    async def edit_pairing_message(self, token: str, text: str) -> None:
+        """Edit the Telegram pairing notification to remove buttons and show result."""
+        if not self._app:
+            return
+        session = self.video_store.get_pairing_session(token)
+        if not session:
+            return
+        chat_id = session.get("chat_id")
+        message_id = session.get("message_id")
+        if not chat_id or not message_id:
+            return
+        try:
+            await self._app.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            logger.warning("Failed to edit pairing Telegram message", exc_info=True)
 
     # ── Callback Handler ───────────────────────────────────────────
 
@@ -817,7 +840,8 @@ class TelegramBot:
             "/pin [ChildName] set XXXX — Set/change PIN\n"
             "/pin [ChildName] disable — Remove PIN\n\n"
             "<b>Devices</b>\n"
-            "/devices — List paired devices\n\n"
+            "/devices — List paired devices\n"
+            "/device rename &lt;id&gt; &lt;name&gt; — Rename a device\n\n"
             "<b>Setup</b>\n"
             "/setup — Guided setup wizard\n\n"
             "<i>Child name can be omitted if only one child exists.</i>\n"
@@ -2222,6 +2246,40 @@ class TelegramBot:
             await update.effective_message.reply_text(
                 f"Free day pass <b>granted</b> for {_esc(cname)} today! No time limits.",
                 parse_mode=ParseMode.HTML,
+            )
+
+    async def _cmd_device(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Rename a paired device.
+
+        /device rename <id> <name> — Rename a paired device
+        """
+        if not await self._check_admin(update):
+            return
+
+        args = context.args or []
+        if len(args) < 3 or args[0] != "rename":
+            await update.effective_message.reply_text(
+                "Usage: /device rename &lt;id&gt; &lt;name&gt;\n\n"
+                "Use /devices to see device IDs.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        try:
+            device_id = int(args[1])
+        except ValueError:
+            await update.effective_message.reply_text("Device ID must be a number.")
+            return
+
+        name = " ".join(args[2:])
+        if self.video_store.rename_device(device_id, name):
+            await update.effective_message.reply_text(
+                f"Device renamed to <b>{_esc(name)}</b>.",
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await update.effective_message.reply_text(
+                "Device not found or already revoked."
             )
 
     async def _cmd_devices(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
