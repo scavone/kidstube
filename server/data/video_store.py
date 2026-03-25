@@ -1629,6 +1629,17 @@ class VideoStore:
             ).fetchone()
             return dict(device)
 
+    def deny_pairing(self, token: str) -> bool:
+        """Deny a pending pairing session. Returns True if updated."""
+        with self._lock:
+            cur = self.conn.execute(
+                """UPDATE pairing_sessions SET status = 'denied'
+                   WHERE token = ? AND status = 'pending'""",
+                (token,),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+
     def set_pairing_device_key(self, token: str, api_key: str) -> None:
         """Store the issued API key on the pairing session for status polling."""
         with self._lock:

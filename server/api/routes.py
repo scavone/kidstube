@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, UploadFile, File
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -1626,6 +1626,121 @@ async def pair_request(request: Request, body: PairRequestBody = None):
         expires_at=session["expires_at"],
         expires_in=expires_in,
     )
+
+
+@public_router.get("/pair/approve/{token}", response_class=HTMLResponse)
+async def pair_approve_page(token: str, request: Request):
+    """Show a simple HTML approval page for QR-code-based pairing.
+
+    Scanning the QR code on the TV opens this page on the parent's phone.
+    The page shows the session details and an approve/deny button.
+    No auth required — the token itself is the secret.
+    """
+    session = video_store.get_pairing_session(token)
+    if not session:
+        return HTMLResponse("<h2>Pairing session not found.</h2>", status_code=404)
+    if session["status"] == "confirmed":
+        return HTMLResponse("<h2>This device has already been paired.</h2>")
+    if session["status"] == "denied":
+        return HTMLResponse("<h2>This pairing request was denied.</h2>")
+
+    pin = session.get("pin", "")
+
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KidsTube — Pair Device</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; max-width: 420px;
+         margin: 40px auto; padding: 0 20px; background: #f8f9fa; color: #1a1a2e; }}
+  .card {{ background: white; border-radius: 16px; padding: 32px;
+           box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }}
+  h2 {{ margin: 0 0 8px; }}
+  .pin {{ font-size: 32px; font-weight: bold; letter-spacing: 8px;
+          font-family: monospace; margin: 16px 0; color: #4361ee; }}
+  .label {{ color: #666; font-size: 14px; }}
+  .buttons {{ display: flex; gap: 12px; margin-top: 24px; }}
+  button {{ flex: 1; padding: 14px; border: none; border-radius: 10px;
+            font-size: 16px; font-weight: 600; cursor: pointer; }}
+  .approve {{ background: #2dc653; color: white; }}
+  .deny {{ background: #e5e5e5; color: #333; }}
+  .approve:hover {{ background: #25a647; }}
+  .deny:hover {{ background: #d5d5d5; }}
+  .done {{ padding: 16px; border-radius: 10px; font-size: 16px; font-weight: 600; }}
+  .done.ok {{ background: #d4edda; color: #155724; }}
+  .done.no {{ background: #f8d7da; color: #721c24; }}
+</style>
+</head><body>
+<div class="card">
+  <h2>Pair Device</h2>
+  <p class="label">A device is requesting access to KidsTube</p>
+  <div class="pin">{pin}</div>
+  <p class="label">Verify this PIN matches the TV screen</p>
+  <div class="buttons" id="buttons">
+    <button class="deny" onclick="respond('deny')">Deny</button>
+    <button class="approve" onclick="respond('approve')">Approve</button>
+  </div>
+  <div id="result"></div>
+</div>
+<script>
+async function respond(action) {{
+  document.getElementById('buttons').style.display = 'none';
+  var resultDiv = document.getElementById('result');
+  try {{
+    var resp = await fetch('/api/pair/' + action + '-web/{token}', {{method: 'POST'}});
+    var msg = document.createElement('div');
+    if (action === 'approve' && resp.ok) {{
+      msg.className = 'done ok';
+      msg.textContent = 'Device paired successfully!';
+    }} else if (action === 'deny') {{
+      msg.className = 'done no';
+      msg.textContent = 'Pairing denied.';
+    }} else {{
+      var data = await resp.json();
+      msg.className = 'done no';
+      msg.textContent = data.detail || 'Error';
+    }}
+    resultDiv.appendChild(msg);
+  }} catch (e) {{
+    var errMsg = document.createElement('div');
+    errMsg.className = 'done no';
+    errMsg.textContent = 'Network error. Please try again.';
+    resultDiv.appendChild(errMsg);
+    document.getElementById('buttons').style.display = 'flex';
+  }}
+}}
+</script>
+</body></html>""")
+
+
+@public_router.post("/pair/approve-web/{token}")
+async def pair_approve_web(token: str):
+    """Approve pairing from the web approval page. No auth — token is the secret."""
+    session = video_store.get_pairing_session(token)
+    if not session:
+        raise HTTPException(status_code=404, detail="Pairing session not found")
+    if session["status"] == "confirmed":
+        raise HTTPException(status_code=409, detail="Already paired")
+
+    device = video_store.confirm_pairing(token)
+    if not device:
+        raise HTTPException(status_code=410, detail="Pairing session expired")
+
+    video_store.set_pairing_device_key(token, device["api_key"])
+    return {"status": "confirmed", "device_name": device["device_name"]}
+
+
+@public_router.post("/pair/deny-web/{token}")
+async def pair_deny_web(token: str):
+    """Deny pairing from the web approval page. No auth — token is the secret."""
+    session = video_store.get_pairing_session(token)
+    if not session:
+        raise HTTPException(status_code=404, detail="Pairing session not found")
+    if session["status"] != "pending":
+        raise HTTPException(status_code=409, detail="Session already resolved")
+
+    video_store.deny_pairing(token)
+    return {"status": "denied"}
 
 
 @public_router.get("/pair/status/{token}", response_model=PairStatusResponse)

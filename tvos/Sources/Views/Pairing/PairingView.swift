@@ -114,7 +114,7 @@ struct PairingView: View {
                 .fontWeight(.semibold)
                 .foregroundColor(AppTheme.textPrimary)
 
-            Text("A pairing request was sent to Telegram.\nYou can also scan the QR code or enter the PIN.")
+            Text("A pairing request was sent to Telegram.\nYou can also scan the QR code to approve.")
                 .font(.callout)
                 .foregroundColor(AppTheme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -158,7 +158,7 @@ struct PairingView: View {
 
                 // PIN Code
                 VStack(spacing: 16) {
-                    Text("Enter this PIN")
+                    Text("Verification PIN")
                         .font(.callout)
                         .foregroundColor(AppTheme.textSecondary)
 
@@ -181,7 +181,7 @@ struct PairingView: View {
                         }
                     }
 
-                    Text("in the Telegram bot")
+                    Text("approve in Telegram")
                         .font(.caption)
                         .foregroundColor(AppTheme.textMuted)
                 }
@@ -313,7 +313,7 @@ final class PairingViewModel: ObservableObject {
             serverURL = url
             pairingToken = response.token
             pin = response.pin
-            qrCodeImage = generateQRCode(from: response.token)
+            qrCodeImage = generateQRCode(from: "\(url)/api/pair/approve/\(response.token)")
             isExpiringSoon = false
             step = .showCode
 
@@ -407,7 +407,7 @@ final class PairingViewModel: ObservableObject {
             let response = try await apiClient.requestPairing()
             pairingToken = response.token
             pin = response.pin
-            qrCodeImage = generateQRCode(from: response.token)
+            qrCodeImage = generateQRCode(from: "\(serverURL)/api/pair/approve/\(response.token)")
             isExpiringSoon = false
             errorMessage = nil
 
