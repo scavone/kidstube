@@ -12,12 +12,26 @@ struct PlayerView: View {
     let video: Video
     let child: ChildProfile
     let onTimesUp: () -> Void
+    let onCategoryTimeUp: (String) -> Void
     let onOutsideSchedule: () -> Void
     let onDismiss: () -> Void
 
     @StateObject private var viewModel = PlayerViewModel()
     @State private var showResumePrompt: Bool = false
     @State private var resumeSeconds: Int = 0
+
+    private var videoCategory: String? {
+        video.effectiveCategory ?? video.category
+    }
+
+    private var categoryLabel: String {
+        switch videoCategory {
+        case "edu": return "Educational"
+        case "fun": return "Entertainment"
+        case "music": return "Music"
+        default: return videoCategory?.capitalized ?? "Category"
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -35,12 +49,25 @@ struct PlayerView: View {
                 WindDownOverlayView(
                     childId: child.id,
                     videoId: video.videoId,
+                    reason: viewModel.windDownReason,
                     onStopNow: {
                         viewModel.pause()
-                        onTimesUp()
+                        switch viewModel.windDownReason {
+                        case .dailyLimit:
+                            onTimesUp()
+                        case .categoryLimit(let label):
+                            onCategoryTimeUp(label)
+                        }
                     },
                     onFinishVideo: {
-                        viewModel.enterFinishVideoMode { onTimesUp() }
+                        viewModel.enterFinishVideoMode {
+                            switch viewModel.windDownReason {
+                            case .dailyLimit:
+                                onTimesUp()
+                            case .categoryLimit(let label):
+                                onCategoryTimeUp(label)
+                            }
+                        }
                     },
                     onTimeGranted: {
                         viewModel.showWindDown = false
@@ -62,6 +89,7 @@ struct PlayerView: View {
                 await viewModel.loadAndPlay(
                     videoId: video.videoId,
                     childId: child.id,
+                    category: videoCategory,
                     resumePosition: nil
                 )
             }
@@ -71,8 +99,18 @@ struct PlayerView: View {
         }
         .onChange(of: viewModel.heartbeat.isTimeExceeded) { _, exceeded in
             if exceeded {
+                // Check whether the global daily limit is truly exhausted.
+                // If global time still remains, this heartbeat zero was caused by a
+                // category limit — use the category-specific wind-down reason.
+                Task { await viewModel.triggerWindDown(categoryLabel: categoryLabel) }
+            }
+        }
+        .onChange(of: viewModel.isCategoryTimeExceeded) { _, exceeded in
+            if exceeded {
                 viewModel.player?.pause()
+                viewModel.windDownReason = .categoryLimit(label: categoryLabel)
                 viewModel.showWindDown = true
+                viewModel.heartbeat.stop()
             }
         }
         .onChange(of: viewModel.heartbeat.isFinishVideoGranted) { _, granted in
@@ -119,6 +157,7 @@ struct PlayerView: View {
                             await viewModel.loadAndPlay(
                                 videoId: video.videoId,
                                 childId: child.id,
+                                category: videoCategory,
                                 resumePosition: resumeSeconds
                             )
                         }
@@ -139,6 +178,7 @@ struct PlayerView: View {
                             await viewModel.loadAndPlay(
                                 videoId: video.videoId,
                                 childId: child.id,
+                                category: videoCategory,
                                 resumePosition: nil
                             )
                         }
@@ -204,6 +244,7 @@ struct PlayerView: View {
                             await viewModel.loadAndPlay(
                                 videoId: video.videoId,
                                 childId: child.id,
+                                category: videoCategory,
                                 resumePosition: nil
                             )
                         }
@@ -269,14 +310,18 @@ final class PlayerViewModel: ObservableObject {
     @Published var scheduleCutoffReached = false
     @Published var showWindDown = false
     @Published var finishVideoMode = false
+    @Published var isCategoryTimeExceeded = false
+    @Published var windDownReason: WindDownReason = .dailyLimit
 
     private let apiClient: APIClient
     private var hlsSessionId: String?
     private var positionSaveTask: Task<Void, Never>?
     private var cutoffTask: Task<Void, Never>?
+    private var categoryPollTask: Task<Void, Never>?
     private var endObserver: NSObjectProtocol?
     private var videoId: String = ""
     private var childId: Int = 0
+    private var videoCategory: String?
 
     init(apiClient: APIClient = APIClient()) {
         self.apiClient = apiClient
@@ -296,11 +341,12 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    func loadAndPlay(videoId: String, childId: Int, resumePosition: Int?) async {
+    func loadAndPlay(videoId: String, childId: Int, category: String?, resumePosition: Int?) async {
         isLoading = true
         errorMessage = nil
         self.videoId = videoId
         self.childId = childId
+        self.videoCategory = category
 
         do {
             let (streamUrl, sessionId) = try await apiClient.getStreamURL(videoId: videoId, childId: childId)
@@ -330,16 +376,40 @@ final class PlayerViewModel: ObservableObject {
 
             // Start schedule cutoff timer
             startScheduleCutoffTimer(childId: childId)
+
+            // Start category time polling if video has a category
+            startCategoryPolling(childId: childId, category: category)
         } catch {
             errorMessage = error.localizedDescription
         }
         isLoading = false
     }
 
+    /// Determine wind-down reason by checking if the global daily limit is exceeded.
+    /// When the heartbeat returns 0, it could mean either the daily OR a category limit
+    /// was hit. If global time still remains, it must be a category limit.
+    func triggerWindDown(categoryLabel: String) async {
+        guard !showWindDown else { return }
+        player?.pause()
+        heartbeat.stop()
+        categoryPollTask?.cancel()
+
+        do {
+            let timeStatus = try await apiClient.getTimeStatus(childId: childId)
+            windDownReason = timeStatus.exceeded ? .dailyLimit : .categoryLimit(label: categoryLabel)
+        } catch {
+            // Can't determine reason — default to daily limit
+            windDownReason = .dailyLimit
+        }
+
+        showWindDown = true
+    }
+
     func pause() {
         player?.pause()
         heartbeat.stop()
         cutoffTask?.cancel()
+        categoryPollTask?.cancel()
         saveCurrentPosition()
     }
 
@@ -348,6 +418,7 @@ final class PlayerViewModel: ObservableObject {
         showWindDown = false
         finishVideoMode = true
         heartbeat.stop()
+        categoryPollTask?.cancel()
         player?.play()
 
         // Observe when the video finishes playing
@@ -369,6 +440,8 @@ final class PlayerViewModel: ObservableObject {
         positionSaveTask = nil
         cutoffTask?.cancel()
         cutoffTask = nil
+        categoryPollTask?.cancel()
+        categoryPollTask = nil
         if let obs = endObserver {
             NotificationCenter.default.removeObserver(obs)
             endObserver = nil
@@ -381,6 +454,31 @@ final class PlayerViewModel: ObservableObject {
             let client = apiClient
             Task { await client.deleteHLSSession(sessionId: sessionId) }
             hlsSessionId = nil
+        }
+    }
+
+    // MARK: - Category Time Polling
+
+    /// Poll category status every 30 seconds and flag when the category is exhausted.
+    private func startCategoryPolling(childId: Int, category: String?) {
+        guard let category else { return }
+        categoryPollTask?.cancel()
+        categoryPollTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                guard !Task.isCancelled else { break }
+                do {
+                    let status = try await self.apiClient.getCategoryTimeStatus(childId: self.childId)
+                    guard !self.showWindDown, !self.finishVideoMode else { continue }
+                    if let info = status.categories[category], info.exhausted {
+                        self.isCategoryTimeExceeded = true
+                        break
+                    }
+                } catch {
+                    // Non-critical — continue polling
+                }
+            }
         }
     }
 

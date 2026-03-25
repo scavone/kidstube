@@ -14,10 +14,12 @@ struct ContentView: View {
     @State private var catalogRefreshTrigger = 0
     @State private var overlayScreen: OverlayScreen?
     @State private var timeStatus: TimeStatus?
+    @State private var categoryTimeStatus: CategoryTimeStatusResponse?
     @State private var sessionStatus: SessionStatus?
     @State private var browsingChannel: ChannelSearchResult?
     @State private var pinGateState: PinGateState = .authenticated
     @State private var suppressAutoSelect = false
+    @State private var categoryTimesUpLabel: String = ""
 
     var body: some View {
         Group {
@@ -75,6 +77,11 @@ struct ContentView: View {
                 onTimesUp: {
                     handleTimesUp(child: item.child)
                 },
+                onCategoryTimeUp: { label in
+                    playerItem = nil
+                    categoryTimesUpLabel = label
+                    overlayScreen = .categoryTimesUp
+                },
                 onOutsideSchedule: {
                     playerItem = nil
                     scheduleUnlockTime = ""
@@ -97,7 +104,8 @@ struct ContentView: View {
                 SidebarView(
                     selection: $sidebarSection,
                     child: child,
-                    timeStatus: timeStatus
+                    timeStatus: timeStatus,
+                    categoryTimeStatus: categoryTimeStatus
                 )
                 .frame(width: AppTheme.sidebarWidth)
 
@@ -128,10 +136,14 @@ struct ContentView: View {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 guard !Task.isCancelled else { break }
                 await checkSessionStatus(childId: child.id)
+                await refreshCategoryTimeStatus(childId: child.id)
             }
         }
         .onChange(of: catalogRefreshTrigger) {
-            Task { await refreshTimeStatus(childId: child.id) }
+            Task {
+                await refreshTimeStatus(childId: child.id)
+                await refreshCategoryTimeStatus(childId: child.id)
+            }
         }
         .onChange(of: sidebarSection) {
             // Touch session on navigation to keep it alive
@@ -192,9 +204,13 @@ struct ContentView: View {
                 )
 
             case .category(let category):
+                let timeInfo = categoryTimeStatus?.categories[category]
+                let isUncapped = categoryTimeStatus.map { $0.uncappedCategories.contains(category) } ?? true
                 CategoryContentView(
                     child: child,
                     category: category,
+                    categoryTimeInfo: timeInfo,
+                    isUncapped: isUncapped,
                     onVideoSelected: { video in
                         playVideo(video)
                     }
@@ -290,6 +306,12 @@ struct ContentView: View {
                 onTimeGranted: { overlayScreen = nil }
             )
 
+        case .categoryTimesUp:
+            CategoryTimesUpView(
+                categoryLabel: categoryTimesUpLabel,
+                onBack: { overlayScreen = nil }
+            )
+
         case .outsideSchedule:
             OutsideScheduleView(
                 unlockTime: scheduleUnlockTime,
@@ -373,6 +395,14 @@ struct ContentView: View {
         }
     }
 
+    private func refreshCategoryTimeStatus(childId: Int) async {
+        do {
+            categoryTimeStatus = try await APIClient().getCategoryTimeStatus(childId: childId)
+        } catch {
+            // Non-critical — sidebar shows no time indicator when unavailable
+        }
+    }
+
     private func checkSessionStatus(childId: Int) async {
         do {
             let status = try await APIClient().getSessionStatus(childId: childId)
@@ -421,6 +451,18 @@ struct ContentView: View {
                 overlayScreen = .cooldown
                 return
             }
+        }
+
+        // Check category time — block if exhausted
+        let videoCategory = video.effectiveCategory ?? video.category
+        if let category = videoCategory,
+           let status = categoryTimeStatus,
+           !status.uncappedCategories.contains(category),
+           let info = status.categories[category],
+           info.exhausted {
+            categoryTimesUpLabel = categoryLabel(for: category)
+            overlayScreen = .categoryTimesUp
+            return
         }
 
         Task {
@@ -498,6 +540,15 @@ struct ContentView: View {
             }
         }
     }
+
+    private func categoryLabel(for category: String) -> String {
+        switch category {
+        case "edu": return "Educational"
+        case "fun": return "Entertainment"
+        case "music": return "Music"
+        default: return category.capitalized
+        }
+    }
 }
 
 // MARK: - Player Item
@@ -523,6 +574,7 @@ enum OverlayScreen: Equatable {
     case channelPending(channel: ChannelSearchResult)
     case denied
     case timesUp
+    case categoryTimesUp
     case outsideSchedule
     case cooldown
 }

@@ -1873,18 +1873,89 @@ class TelegramBot:
         cid = child["id"]
         cname = child["name"]
 
-        # /time [Child] set <minutes>
+        # /time [Child] set <minutes>          — set global daily limit
+        # /time [Child] set <category> <minutes> — set per-category limit
         if subcmd == "set" and len(sub_args) >= 2:
+            # Detect: is sub_args[1] a digit (global) or a category name?
+            if sub_args[1].lstrip("-").isdigit():
+                # Global: /time [Child] set <minutes>
+                try:
+                    minutes = int(sub_args[1])
+                    if minutes < 0:
+                        raise ValueError
+                except ValueError:
+                    await update.effective_message.reply_text("Invalid minutes. Use a positive number.")
+                    return
+                self.video_store.set_child_setting(cid, "daily_limit_minutes", str(minutes))
+                await update.effective_message.reply_text(
+                    f"Daily limit for {_esc(cname)} set to <b>{minutes}</b> minutes.",
+                    parse_mode=ParseMode.HTML,
+                )
+            elif len(sub_args) >= 3:
+                # Per-category: /time [Child] set <category> <minutes>
+                category = sub_args[1].lower()
+                try:
+                    minutes = int(sub_args[2])
+                    if minutes < 0:
+                        raise ValueError
+                except ValueError:
+                    await update.effective_message.reply_text("Invalid minutes. Use a positive number.")
+                    return
+                self.video_store.set_category_limit(cid, category, minutes)
+                await update.effective_message.reply_text(
+                    f"<b>{_esc(category)}</b> limit for {_esc(cname)} set to <b>{minutes}</b> minutes.",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                # sub_args[1] is not a number and no third arg provided
+                await update.effective_message.reply_text(
+                    "Invalid value. Usage:\n"
+                    "  /time Name set 90          — global limit\n"
+                    "  /time Name set fun 60      — category limit"
+                )
+
+        # /time [Child] add <minutes> [category] — grant bonus time (global or per-category)
+        elif subcmd == "add" and len(sub_args) >= 2:
             try:
                 minutes = int(sub_args[1])
-                if minutes < 0:
+                if minutes <= 0:
                     raise ValueError
             except ValueError:
                 await update.effective_message.reply_text("Invalid minutes. Use a positive number.")
                 return
-            self.video_store.set_child_setting(cid, "daily_limit_minutes", str(minutes))
+            tz = self.config.watch_limits.timezone if self.config else "America/New_York"
+            today = get_today_str(tz)
+            if len(sub_args) >= 3:
+                # Per-category bonus
+                category = sub_args[2].lower()
+                self.video_store.add_category_bonus(cid, category, minutes, today)
+                total = self.video_store.get_category_bonus(cid, category, today)
+                await update.effective_message.reply_text(
+                    f"Granted +{minutes} min of <b>{_esc(category)}</b> time to {_esc(cname)} "
+                    f"({total} min bonus today).",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                # Global bonus (same as grant_time callback)
+                bonus_date = self.video_store.get_child_setting(cid, "bonus_minutes_date", "")
+                if bonus_date == today:
+                    existing = int(self.video_store.get_child_setting(cid, "bonus_minutes", "0"))
+                else:
+                    existing = 0
+                self.video_store.set_child_setting(cid, "bonus_minutes_date", today)
+                self.video_store.set_child_setting(cid, "bonus_minutes", str(existing + minutes))
+                total = existing + minutes
+                await update.effective_message.reply_text(
+                    f"Granted +{minutes} min to {_esc(cname)} ({total} min bonus today).",
+                    parse_mode=ParseMode.HTML,
+                )
+
+        # /time [Child] clear <category> — remove per-category limit
+        elif subcmd == "clear" and len(sub_args) >= 2:
+            category = sub_args[1].lower()
+            self.video_store.clear_category_limit(cid, category)
             await update.effective_message.reply_text(
-                f"Daily limit for {_esc(cname)} set to <b>{minutes}</b> minutes.",
+                f"<b>{_esc(category)}</b> limit for {_esc(cname)} <b>removed</b>.",
                 parse_mode=ParseMode.HTML,
             )
 
@@ -1990,7 +2061,11 @@ class TelegramBot:
                 "Usage:\n"
                 "/time [ChildName] — View time status\n"
                 "/time [ChildName] set 90 — Set daily limit\n"
-                "/time [ChildName] off — Disable limit\n"
+                "/time [ChildName] set fun 60 — Set per-category limit\n"
+                "/time [ChildName] add 15 — Grant bonus time (global)\n"
+                "/time [ChildName] add 15 fun — Grant bonus time (category)\n"
+                "/time [ChildName] clear fun — Remove category limit\n"
+                "/time [ChildName] off — Disable daily limit\n"
                 "/time [ChildName] schedule 800 2000 — Set default schedule\n"
                 "/time [ChildName] schedule monday 1500 1900 — Per-day schedule\n"
                 "/time [ChildName] schedule default 800 2000 — Default fallback\n"
@@ -2068,6 +2143,23 @@ class TelegramBot:
                 lines.append(f"  Default: {s} — {e}")
             except (ValueError, _json.JSONDecodeError):
                 pass
+
+        # Per-category limits breakdown
+        cat_limits = self.video_store.get_category_limits(cid)
+        if cat_limits:
+            lines.append("\n<b>Category limits:</b>")
+            for cat, limit_min in sorted(cat_limits.items()):
+                used_cat = self.video_store.get_daily_category_watch_minutes(
+                    cid, today, cat, utc_bounds=bounds
+                )
+                bonus_cat = self.video_store.get_category_bonus(cid, cat, today)
+                effective = limit_min + bonus_cat
+                remaining_cat = max(0, effective - used_cat)
+                bonus_str = f" (+{bonus_cat} bonus)" if bonus_cat else ""
+                status_icon = "🔴" if remaining_cat <= 0 else "🟢"
+                lines.append(
+                    f"  {status_icon} {_esc(cat)}: {used_cat:.0f}/{effective} min{bonus_str}"
+                )
 
         await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 

@@ -257,6 +257,11 @@ final class APIClient: Sendable {
 
     // MARK: - Time & Schedule
 
+    /// Get per-category time usage and remaining limits for a child.
+    func getCategoryTimeStatus(childId: Int) async throws -> CategoryTimeStatusResponse {
+        return try await get("/api/category-time-status", query: ["child_id": String(childId)])
+    }
+
     /// Get the child's time usage and remaining limit.
     func getTimeStatus(childId: Int) async throws -> TimeStatus {
         return try await get("/api/time-status", query: ["child_id": String(childId)])

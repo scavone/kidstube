@@ -79,12 +79,27 @@ class StreamUrlResponse(BaseModel):
     session_id: Optional[str] = None
 
 
+class CategoryTimeEntry(BaseModel):
+    limit_minutes: int
+    used_minutes: float
+    remaining_minutes: float
+    remaining_seconds: int
+    bonus_minutes: int
+    exhausted: bool
+
+
+class CategoryTimeStatusResponse(BaseModel):
+    categories: dict[str, CategoryTimeEntry]
+    uncapped_categories: list[str]
+
+
 class TimeStatusResponse(BaseModel):
     limit_min: int
     used_min: float
     remaining_min: float
     remaining_sec: int
     exceeded: bool
+    category_status: Optional[dict] = None
 
 
 class ScheduleStatusResponse(BaseModel):

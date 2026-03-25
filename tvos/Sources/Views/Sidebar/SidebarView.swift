@@ -14,6 +14,7 @@ struct SidebarView: View {
     @Binding var selection: SidebarSection
     let child: ChildProfile
     let timeStatus: TimeStatus?
+    let categoryTimeStatus: CategoryTimeStatusResponse?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -47,18 +48,16 @@ struct SidebarView: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 4)
 
-                sidebarItem(
+                categorySidebarItem(
                     icon: "graduationcap.fill",
                     label: "Educational",
-                    section: .category("edu"),
-                    accentColor: AppTheme.categoryColor("edu")
+                    category: "edu"
                 )
 
-                sidebarItem(
+                categorySidebarItem(
                     icon: "gamecontroller.fill",
                     label: "Entertainment",
-                    section: .category("fun"),
-                    accentColor: AppTheme.categoryColor("fun")
+                    category: "fun"
                 )
 
                 Divider()
@@ -142,10 +141,43 @@ struct SidebarView: View {
         SidebarItemView(
             icon: icon,
             label: label,
+            subtitle: nil,
             isSelected: selection == section,
+            isDisabled: false,
             accentColor: accentColor,
             action: { selection = section }
         )
+    }
+
+    // MARK: - Category Sidebar Item
+
+    /// Builds a category item with optional time-remaining subtitle and exhaustion dimming.
+    private func categorySidebarItem(icon: String, label: String, category: String) -> some View {
+        let isUncapped = categoryTimeStatus?.uncappedCategories.contains(category) ?? true
+        let timeInfo = categoryTimeStatus?.categories[category]
+        let isExhausted = !isUncapped && (timeInfo?.exhausted == true)
+        let subtitle = categorySubtitle(timeInfo: timeInfo, isUncapped: isUncapped)
+
+        return SidebarItemView(
+            icon: icon,
+            label: label,
+            subtitle: subtitle,
+            isSelected: selection == .category(category),
+            isDisabled: isExhausted,
+            accentColor: AppTheme.categoryColor(category),
+            action: { if !isExhausted { selection = .category(category) } }
+        )
+    }
+
+    private func categorySubtitle(timeInfo: CategoryTimeInfo?, isUncapped: Bool) -> String? {
+        guard !isUncapped, let info = timeInfo else { return nil }
+        if info.exhausted {
+            return "0 min left"
+        }
+        if info.bonusMinutes > 0 {
+            return "\(info.formattedRemaining)  +\(info.bonusMinutes) bonus"
+        }
+        return info.formattedRemaining
     }
 }
 
@@ -153,7 +185,9 @@ struct SidebarView: View {
 struct SidebarItemView: View {
     let icon: String
     let label: String
+    let subtitle: String?
     let isSelected: Bool
+    let isDisabled: Bool
     let accentColor: Color
     let action: () -> Void
 
@@ -164,19 +198,29 @@ struct SidebarItemView: View {
             HStack(spacing: 14) {
                 Image(systemName: icon)
                     .font(.body)
-                    .foregroundColor(isSelected ? accentColor : AppTheme.textSecondary)
+                    .foregroundColor(iconColor)
                     .frame(width: 24)
 
-                Text(label)
-                    .font(.callout)
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .foregroundColor(isSelected ? AppTheme.textPrimary : AppTheme.textSecondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.callout)
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .foregroundColor(labelColor)
+                        .lineLimit(1)
+
+                    if let sub = subtitle {
+                        Text(sub)
+                            .font(.caption2)
+                            .foregroundColor(subtitleColor)
+                            .lineLimit(1)
+                    }
+                }
 
                 Spacer()
             }
             .padding(.horizontal, 20)
-            .frame(height: 52)
+            .frame(minHeight: 52)
+            .padding(.vertical, subtitle != nil ? 6 : 0)
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .fill(isFocused || isSelected ? AppTheme.sidebarSelectedBackground : Color.clear)
@@ -186,5 +230,22 @@ struct SidebarItemView: View {
         }
         .buttonStyle(.plain)
         .focused($isFocused)
+        .opacity(isDisabled ? 0.4 : 1.0)
+        .allowsHitTesting(!isDisabled)
+    }
+
+    private var iconColor: Color {
+        if isDisabled { return AppTheme.textMuted }
+        return isSelected ? accentColor : AppTheme.textSecondary
+    }
+
+    private var labelColor: Color {
+        if isDisabled { return AppTheme.textMuted }
+        return isSelected ? AppTheme.textPrimary : AppTheme.textSecondary
+    }
+
+    private var subtitleColor: Color {
+        if isDisabled { return AppTheme.textMuted }
+        return AppTheme.textMuted
     }
 }

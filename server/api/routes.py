@@ -38,6 +38,8 @@ from api.models import (
     VideoStatusResponse,
     StreamUrlResponse,
     TimeStatusResponse,
+    CategoryTimeStatusResponse,
+    CategoryTimeEntry,
     ScheduleStatusResponse,
     ChannelRequestResponse,
     TimeRequestBody,
@@ -1085,6 +1087,24 @@ async def watch_heartbeat(request: Request, body: HeartbeatBody):
     # Calculate remaining time
     remaining = _get_remaining_seconds(body.child_id)
 
+    # Check per-category limits (only when global time hasn't already expired)
+    if remaining != 0:
+        tz = config.watch_limits.timezone
+        today = get_today_str(tz)
+        cat_limits = video_store.get_category_limits(body.child_id)
+        if cat_limits:
+            video_cat = video_store.get_video_effective_category(body.video_id, body.child_id)
+            if video_cat in cat_limits:
+                bounds = get_day_utc_bounds(today, tz)
+                limit_min = cat_limits[video_cat]
+                used_cat = video_store.get_daily_category_watch_minutes(
+                    body.child_id, today, video_cat, utc_bounds=bounds
+                )
+                bonus_cat = video_store.get_category_bonus(body.child_id, video_cat, today)
+                remaining_cat = max(0.0, limit_min + bonus_cat - used_cat)
+                if remaining_cat <= 0:
+                    remaining = 0
+
     # If time is up, check if parent granted "finish this video"
     if remaining == 0:
         tz = config.watch_limits.timezone
@@ -1211,13 +1231,54 @@ async def time_status(child_id: int = Query(..., gt=0)):
     else:
         remaining_min = max(0.0, limit_min - used_min)
 
+    # Include category_status summary if any per-category limits are configured
+    cat_limits = video_store.get_category_limits(child_id)
+    category_status = {"has_limits": True, "categories": list(cat_limits.keys())} if cat_limits else None
+
     return TimeStatusResponse(
         limit_min=limit_min,
         used_min=round(used_min, 1),
         remaining_min=round(remaining_min, 1),
         remaining_sec=-1 if is_free_day else int(remaining_min * 60),
         exceeded=False if is_free_day else remaining_min <= 0,
+        category_status=category_status,
     )
+
+
+# ── Category Time Status ────────────────────────────────────────────
+
+@router.get("/category-time-status")
+async def category_time_status(child_id: int = Query(..., gt=0)):
+    child = video_store.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    tz = config.watch_limits.timezone
+    today = get_today_str(tz)
+    bounds = get_day_utc_bounds(today, tz)
+
+    cat_limits = video_store.get_category_limits(child_id)
+
+    categories: dict[str, CategoryTimeEntry] = {}
+    for cat, limit_min in cat_limits.items():
+        used_min = video_store.get_daily_category_watch_minutes(child_id, today, cat, utc_bounds=bounds)
+        bonus_min = video_store.get_category_bonus(child_id, cat, today)
+        effective_limit = limit_min + bonus_min
+        remaining_min = max(0.0, effective_limit - used_min)
+        categories[cat] = CategoryTimeEntry(
+            limit_minutes=limit_min,
+            used_minutes=round(used_min, 1),
+            remaining_minutes=round(remaining_min, 1),
+            remaining_seconds=int(remaining_min * 60),
+            bonus_minutes=bonus_min,
+            exhausted=remaining_min <= 0,
+        )
+
+    # Uncapped: categories watched today that have no limit set
+    all_watched = video_store.get_watched_categories_today(child_id, bounds)
+    uncapped = [c for c in all_watched if c not in cat_limits]
+
+    return CategoryTimeStatusResponse(categories=categories, uncapped_categories=uncapped)
 
 
 # ── Schedule Status ─────────────────────────────────────────────────

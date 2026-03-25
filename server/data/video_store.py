@@ -79,6 +79,7 @@ class VideoStore:
                 video_id TEXT NOT NULL,
                 child_id INTEGER NOT NULL,
                 duration INTEGER NOT NULL,
+                category TEXT NOT NULL DEFAULT 'fun',
                 watched_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
             );
@@ -228,6 +229,15 @@ class VideoStore:
                 WHERE watch_status IS NULL AND watch_position > 0
                   AND watch_duration > 0 AND watch_position >= watch_duration - 30
             """)
+            self.conn.commit()
+
+        # Add category column to watch_log if missing
+        cursor = self.conn.execute("PRAGMA table_info(watch_log)")
+        wl_columns = {row[1] for row in cursor.fetchall()}
+        if "category" not in wl_columns:
+            self.conn.execute(
+                "ALTER TABLE watch_log ADD COLUMN category TEXT NOT NULL DEFAULT 'fun'"
+            )
             self.conn.commit()
 
         # Migrate global channels -> per-child channels for existing databases.
@@ -984,11 +994,20 @@ class VideoStore:
     # ── Watch Time Tracking ─────────────────────────────────────────
 
     def record_watch_seconds(self, video_id: str, child_id: int, seconds: int) -> None:
-        """Log playback seconds from a heartbeat."""
+        """Log playback seconds from a heartbeat, including effective category."""
         with self._lock:
+            cat_row = self.conn.execute(
+                """SELECT COALESCE(v.category, ch.category, 'fun')
+                   FROM videos v
+                   LEFT JOIN child_channels ch
+                       ON v.channel_name = ch.channel_name AND ch.child_id = ?
+                   WHERE v.video_id = ?""",
+                (child_id, video_id),
+            ).fetchone()
+            category = cat_row[0] if cat_row else "fun"
             self.conn.execute(
-                "INSERT INTO watch_log (video_id, child_id, duration) VALUES (?, ?, ?)",
-                (video_id, child_id, seconds),
+                "INSERT INTO watch_log (video_id, child_id, duration, category) VALUES (?, ?, ?, ?)",
+                (video_id, child_id, seconds, category),
             )
             self.conn.commit()
 
@@ -1034,6 +1053,83 @@ class VideoStore:
                 }
                 for row in cursor.fetchall()
             ]
+
+    # ── Category Time Limits ────────────────────────────────────────
+
+    def get_category_limits(self, child_id: int) -> dict[str, int]:
+        """Return per-category daily limits for a child: {category: minutes}."""
+        settings = self.get_child_settings(child_id)
+        prefix = "category_limit:"
+        return {
+            k[len(prefix):]: int(v)
+            for k, v in settings.items()
+            if k.startswith(prefix) and v
+        }
+
+    def set_category_limit(self, child_id: int, category: str, minutes: int) -> None:
+        """Set a per-category daily limit."""
+        self.set_child_setting(child_id, f"category_limit:{category}", str(minutes))
+
+    def clear_category_limit(self, child_id: int, category: str) -> None:
+        """Remove a per-category daily limit."""
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM child_settings WHERE child_id = ? AND key = ?",
+                (child_id, f"category_limit:{category}"),
+            )
+            self.conn.commit()
+
+    def get_daily_category_watch_minutes(
+        self, child_id: int, date_str: str, category: str,
+        utc_bounds: Optional[tuple[str, str]] = None
+    ) -> float:
+        """Sum watch time for a child on a date filtered by category. Returns minutes."""
+        start, end = utc_bounds if utc_bounds else (date_str, date_str)
+        end_clause = "?" if utc_bounds else "date(?, '+1 day')"
+        with self._lock:
+            row = self.conn.execute(
+                f"""SELECT COALESCE(SUM(duration), 0) FROM watch_log
+                    WHERE child_id = ? AND category = ?
+                      AND watched_at >= ? AND watched_at < {end_clause}""",
+                (child_id, category, start, end),
+            ).fetchone()
+            return row[0] / 60.0 if row else 0.0
+
+    def get_category_bonus(self, child_id: int, category: str, date: str) -> int:
+        """Get bonus minutes granted for a specific category and date."""
+        val = self.get_child_setting(child_id, f"bonus:{category}:{date}", "0")
+        return int(val) if val else 0
+
+    def add_category_bonus(self, child_id: int, category: str, minutes: int, date: str) -> None:
+        """Accumulate bonus minutes for a specific category and date."""
+        existing = self.get_category_bonus(child_id, category, date)
+        self.set_child_setting(child_id, f"bonus:{category}:{date}", str(existing + minutes))
+
+    def get_watched_categories_today(
+        self, child_id: int, utc_bounds: tuple[str, str]
+    ) -> list[str]:
+        """Return distinct categories from watch_log for today."""
+        start, end = utc_bounds
+        with self._lock:
+            cursor = self.conn.execute(
+                """SELECT DISTINCT category FROM watch_log
+                   WHERE child_id = ? AND watched_at >= ? AND watched_at < ?""",
+                (child_id, start, end),
+            )
+            return [row[0] for row in cursor.fetchall()]
+
+    def get_video_effective_category(self, video_id: str, child_id: int) -> str:
+        """Return the effective category for a video: video.category → channel.category → 'fun'."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(v.category, ch.category, 'fun')
+                   FROM videos v
+                   LEFT JOIN child_channels ch
+                       ON v.channel_name = ch.channel_name AND ch.child_id = ?
+                   WHERE v.video_id = ?""",
+                (child_id, video_id),
+            ).fetchone()
+        return row[0] if row else "fun"
 
     # ── Channel Allow/Block Lists (Per-Child) ─────────────────────
 

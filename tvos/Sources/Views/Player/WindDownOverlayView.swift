@@ -1,15 +1,31 @@
 import SwiftUI
 
+/// Reason that triggered the wind-down overlay during playback.
+enum WindDownReason: Equatable {
+    case dailyLimit
+    case categoryLimit(label: String)
+}
+
 /// Full-screen overlay shown when time expires mid-video.
 /// Offers three choices: finish this video, ask for more time, or stop now.
 struct WindDownOverlayView: View {
     let childId: Int
     let videoId: String
+    let reason: WindDownReason
     let onStopNow: () -> Void
     let onFinishVideo: () -> Void
     let onTimeGranted: () -> Void
 
     @StateObject private var timeRequest = TimeRequestService()
+
+    private var title: String {
+        switch reason {
+        case .dailyLimit:
+            return "Time's Up!"
+        case .categoryLimit(let label):
+            return "\(label) Time Up!"
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -21,7 +37,7 @@ struct WindDownOverlayView: View {
                     .font(.system(size: 64))
                     .foregroundColor(.orange)
 
-                Text("Time's Up!")
+                Text(title)
                     .font(.largeTitle)
                     .fontWeight(.bold)
                     .foregroundColor(.white)

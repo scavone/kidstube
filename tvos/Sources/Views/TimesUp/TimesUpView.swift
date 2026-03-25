@@ -99,6 +99,40 @@ struct TimesUpView: View {
     }
 }
 
+/// "Category time exhausted" screen shown when a per-category limit is reached.
+struct CategoryTimesUpView: View {
+    let categoryLabel: String
+    let onBack: () -> Void
+
+    var body: some View {
+        VStack(spacing: 30) {
+            Spacer()
+
+            Image(systemName: "clock.badge.xmark")
+                .font(.system(size: 80))
+                .foregroundColor(.orange)
+
+            Text("No more \(categoryLabel) time today!")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .multilineTextAlignment(.center)
+
+            Text("You've used all your \(categoryLabel.lowercased()) time.\nTry another category or come back tomorrow!")
+                .font(.callout)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            Spacer()
+
+            Button("OK", action: onBack)
+                .buttonStyle(.borderedProminent)
+
+            Spacer()
+        }
+        .padding(60)
+    }
+}
+
 /// "Outside schedule" screen shown when it's not within the allowed viewing window.
 struct OutsideScheduleView: View {
     let unlockTime: String
