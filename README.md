@@ -102,6 +102,8 @@ Optional variables:
 | `BRG_WEB_PORT` | `8080` | Server listen port |
 | `BRG_DAILY_LIMIT_MINUTES` | `120` | Default daily screen time per child |
 | `BRG_PREFERRED_AUDIO_LANG` | *(none)* | ISO 639-1 code (e.g. `en`) for multi-language videos |
+| `BRG_DATABASE_TYPE` | `sqlite` | Database backend: `sqlite` or `postgres` |
+| `BRG_DATABASE_URL` | *(none)* | PostgreSQL DSN when `BRG_DATABASE_TYPE=postgres` (e.g. `postgresql://user:pass@host/db`) |
 
 ### Running with Docker
 
@@ -341,10 +343,15 @@ All `/api/*` endpoints require `Authorization: Bearer <BRG_API_KEY>` except avat
 | `/api/onboarding/starter-channels` | GET | Get curated starter channels |
 | `/api/onboarding/import` | POST | Import starter channels for a child |
 | `/api/watch-heartbeat` | POST | Report playback progress |
-| `/api/time-status` | GET | Remaining time budget |
+| `/api/time-status` | GET | Remaining time budget (includes `category_status` if limits exist) |
+| `/api/category-time-status` | GET | Per-category remaining time (params: `child_id`) |
 | `/api/schedule-status` | GET | Check schedule window |
+| `/api/session-status` | GET | Session windowing state (cooldowns, params: `child_id`) |
 | `/api/pair/request` | POST | Initiate device pairing (public, rate-limited) |
 | `/api/pair/status/{token}` | GET | Poll pairing status (public) |
+| `/api/pair/approve/{token}` | GET | Web approval page (HTML, for QR code flow) |
+| `/api/pair/approve-web/{token}` | POST | Approve pairing from web page (public, accepts `device_name`) |
+| `/api/pair/deny-web/{token}` | POST | Deny pairing from web page (public) |
 | `/api/pair/confirm/{token}` | POST | Admin confirms pairing, issues device API key |
 | `/api/pair/confirm-by-pin` | POST | Admin confirms pairing by PIN |
 | `/api/devices` | GET | List paired devices |
