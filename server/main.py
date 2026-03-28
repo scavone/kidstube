@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded
 load_dotenv()
 
 from config import load_config
-from data.video_store import VideoStore
+from data import create_video_store
 from invidious.client import InvidiousClient
 from api import routes as api_routes
 from bot.telegram_bot import TelegramBot
@@ -35,7 +35,7 @@ def create_app(cfg=None) -> FastAPI:
         cfg = load_config()
 
     # Initialize data layer
-    store = VideoStore(cfg.database.path)
+    store = create_video_store(cfg.database)
 
     # Initialize Invidious client
     inv_client = InvidiousClient(base_url=cfg.invidious.base_url)

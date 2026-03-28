@@ -60,6 +60,8 @@ class InvidiousConfig:
 @dataclass
 class DatabaseConfig:
     path: str = "db/videos.db"
+    type: str = "sqlite"   # "sqlite" or "postgres"
+    url: str = ""          # PostgreSQL DSN, e.g. postgresql://user:pass@host/db
 
 
 @dataclass
@@ -121,6 +123,8 @@ class Config:
             ),
             database=DatabaseConfig(
                 path=os.environ.get("BRG_DB_PATH", "db/videos.db"),
+                type=os.environ.get("BRG_DATABASE_TYPE", "sqlite"),
+                url=os.environ.get("BRG_DATABASE_URL", ""),
             ),
             watch_limits=WatchLimitsConfig(
                 daily_limit_minutes=int(os.environ.get("BRG_DAILY_LIMIT_MINUTES", "120")),

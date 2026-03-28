@@ -14,8 +14,10 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from data.base_store import BaseVideoStore
 
-class VideoStore:
+
+class SQLiteVideoStore(BaseVideoStore):
     """SQLite database for video approval, child profiles, and watch tracking."""
 
     def __init__(self, db_path: str = "db/videos.db"):
@@ -1724,3 +1726,7 @@ class VideoStore:
 
     def close(self) -> None:
         self.conn.close()
+
+
+# Backward-compatible alias — existing code using VideoStore continues to work.
+VideoStore = SQLiteVideoStore
