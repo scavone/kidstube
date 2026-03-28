@@ -14,8 +14,6 @@ struct PendingView: View {
 
     var body: some View {
         VStack(spacing: 30) {
-            Spacer()
-
             // Animated waiting indicator
             ZStack {
                 Circle()
@@ -42,27 +40,28 @@ struct PendingView: View {
             Text("Waiting for Approval")
                 .font(.title2)
                 .fontWeight(.bold)
+                .foregroundColor(.white)
 
             Text("\"\(videoTitle)\"")
                 .font(.headline)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textSecondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 80)
 
             Text("A parent has been notified.\nPlease wait for approval.")
                 .font(.callout)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textSecondary)
                 .multilineTextAlignment(.center)
-
-            Spacer()
 
             Button("Cancel", action: onCancel)
                 .buttonStyle(.bordered)
-
-            Spacer()
         }
         .padding(60)
+        .background(Color(white: 0.12).opacity(0.95))
+        .cornerRadius(24)
+        .shadow(color: .black.opacity(0.5), radius: 20)
+        .frame(maxWidth: 800)
         .task {
             viewModel.startPolling(videoId: videoId, childId: child.id)
         }

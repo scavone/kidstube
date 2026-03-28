@@ -11,8 +11,6 @@ struct TimesUpView: View {
 
     var body: some View {
         VStack(spacing: 30) {
-            Spacer()
-
             Image(systemName: "hourglass.bottomhalf.filled")
                 .font(.system(size: 80))
                 .foregroundColor(.orange)
@@ -20,16 +18,19 @@ struct TimesUpView: View {
             Text("Time's Up!")
                 .font(.largeTitle)
                 .fontWeight(.bold)
+                .foregroundColor(.white)
 
             Text("Great watching, \(childName)!")
                 .font(.title3)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textSecondary)
 
             timeRequestContent
-
-            Spacer()
         }
         .padding(60)
+        .background(Color(white: 0.12).opacity(0.95))
+        .cornerRadius(24)
+        .shadow(color: .black.opacity(0.5), radius: 20)
+        .frame(maxWidth: 800)
         .onAppear {
             if childId > 0 {
                 timeRequest.checkStatus(childId: childId)
@@ -44,10 +45,8 @@ struct TimesUpView: View {
             VStack(spacing: 20) {
                 Text("You've used all your screen time for today.\nCome back tomorrow!")
                     .font(.callout)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.textSecondary)
                     .multilineTextAlignment(.center)
-
-                Spacer()
 
                 if childId > 0 {
                     Button {
@@ -66,21 +65,20 @@ struct TimesUpView: View {
             }
         case .requesting, .pending:
             VStack(spacing: 20) {
-                Spacer()
                 ProgressView()
                     .scaleEffect(1.5)
                 Text("Waiting for a response...")
                     .font(.title3)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.textSecondary)
             }
         case .granted(let bonus):
             VStack(spacing: 20) {
-                Spacer()
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 48))
                     .foregroundColor(.green)
                 Text("You got \(bonus) more minutes!")
                     .font(.title2)
+                    .foregroundColor(.white)
                 Button("Continue Watching", action: onTimeGranted)
                     .buttonStyle(.borderedProminent)
             }
@@ -88,9 +86,7 @@ struct TimesUpView: View {
             VStack(spacing: 20) {
                 Text("Maybe tomorrow!")
                     .font(.title2)
-                    .foregroundColor(.secondary)
-
-                Spacer()
+                    .foregroundColor(AppTheme.textSecondary)
 
                 Button("OK", action: onBack)
                     .buttonStyle(.borderedProminent)
@@ -106,8 +102,6 @@ struct CategoryTimesUpView: View {
 
     var body: some View {
         VStack(spacing: 30) {
-            Spacer()
-
             Image(systemName: "clock.badge.xmark")
                 .font(.system(size: 80))
                 .foregroundColor(.orange)
@@ -115,21 +109,22 @@ struct CategoryTimesUpView: View {
             Text("No more \(categoryLabel) time today!")
                 .font(.largeTitle)
                 .fontWeight(.bold)
+                .foregroundColor(.white)
                 .multilineTextAlignment(.center)
 
             Text("You've used all your \(categoryLabel.lowercased()) time.\nTry another category or come back tomorrow!")
                 .font(.callout)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textSecondary)
                 .multilineTextAlignment(.center)
-
-            Spacer()
 
             Button("OK", action: onBack)
                 .buttonStyle(.borderedProminent)
-
-            Spacer()
         }
         .padding(60)
+        .background(Color(white: 0.12).opacity(0.95))
+        .cornerRadius(24)
+        .shadow(color: .black.opacity(0.5), radius: 20)
+        .frame(maxWidth: 800)
     }
 }
 
@@ -140,8 +135,6 @@ struct OutsideScheduleView: View {
 
     var body: some View {
         VStack(spacing: 30) {
-            Spacer()
-
             Image(systemName: "moon.stars")
                 .font(.system(size: 80))
                 .foregroundColor(.indigo)
@@ -149,25 +142,26 @@ struct OutsideScheduleView: View {
             Text("Not Viewing Time")
                 .font(.largeTitle)
                 .fontWeight(.bold)
+                .foregroundColor(.white)
 
             if !unlockTime.isEmpty {
                 Text("Videos will be available at \(unlockTime)")
                     .font(.title3)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.textSecondary)
             }
 
             Text("It's time for other activities.\nSee you later!")
                 .font(.callout)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textSecondary)
                 .multilineTextAlignment(.center)
-
-            Spacer()
 
             Button("OK", action: onBack)
                 .buttonStyle(.borderedProminent)
-
-            Spacer()
         }
         .padding(60)
+        .background(Color(white: 0.12).opacity(0.95))
+        .cornerRadius(24)
+        .shadow(color: .black.opacity(0.5), radius: 20)
+        .frame(maxWidth: 800)
     }
 }

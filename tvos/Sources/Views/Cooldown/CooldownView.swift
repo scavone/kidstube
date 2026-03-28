@@ -17,35 +17,32 @@ struct CooldownView: View {
     private var isExhausted: Bool { sessionStatus.sessionsExhausted == true }
 
     var body: some View {
-        ZStack {
-            AppTheme.background.ignoresSafeArea()
+        VStack(spacing: 40) {
+            Image(systemName: isExhausted ? "checkmark.seal.fill" : "pause.circle.fill")
+                .font(.system(size: 80))
+                .foregroundColor(isExhausted ? .green : .orange)
 
-            VStack(spacing: 40) {
-                Spacer()
+            Text(isExhausted ? "All done for today!" : "Time for a break!")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
 
-                Image(systemName: isExhausted ? "checkmark.seal.fill" : "pause.circle.fill")
-                    .font(.system(size: 80))
-                    .foregroundColor(isExhausted ? .green : .orange)
+            sessionProgressView
 
-                Text(isExhausted ? "All done for today!" : "Time for a break!")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-
-                sessionProgressView
-
-                if isExhausted {
-                    Text("You've had a great watching session today!\nCome back tomorrow.")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                } else {
-                    cooldownCountdownView
-                }
-
-                Spacer()
+            if isExhausted {
+                Text("You've had a great watching session today!\nCome back tomorrow.")
+                    .font(.title3)
+                    .foregroundColor(AppTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            } else {
+                cooldownCountdownView
             }
-            .padding(60)
         }
+        .padding(60)
+        .background(Color(white: 0.12).opacity(0.95))
+        .cornerRadius(24)
+        .shadow(color: .black.opacity(0.5), radius: 20)
+        .frame(maxWidth: 800)
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             guard !isExhausted, secondsRemaining > 0 else { return }
             secondsRemaining -= 1
@@ -61,7 +58,7 @@ struct CooldownView: View {
            let max = sessionStatus.maxSessions {
             Text("Session \(current) of \(max) complete")
                 .font(.title2)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textSecondary)
         }
     }
 
@@ -70,7 +67,7 @@ struct CooldownView: View {
         VStack(spacing: 16) {
             Text("Your next session starts in")
                 .font(.title3)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textSecondary)
 
             if secondsRemaining > 0 {
                 Text(formatCountdown(secondsRemaining))

@@ -73,6 +73,7 @@ struct ContentView: View {
                 SessionManager.clearAll()
             }
         }
+        .preferredColorScheme(.dark)
         .fullScreenCover(item: $playerItem, onDismiss: {
             catalogRefreshTrigger += 1
         }) { item in
@@ -122,7 +123,13 @@ struct ContentView: View {
                 .focusSection()
             }
             .disabled(overlayScreen != nil)
-            .blur(radius: overlayScreen != nil ? 5 : 0)
+            .blur(radius: overlayScreen != nil ? 12 : 0)
+
+            // Dim layer behind overlay
+            if overlayScreen != nil {
+                Color.black.opacity(0.85)
+                    .ignoresSafeArea()
+            }
 
             // Overlay screens (pending, denied, timesUp, outsideSchedule)
             if let overlay = overlayScreen {
@@ -191,6 +198,13 @@ struct ContentView: View {
                     onOutsideSchedule: { unlockTime in
                         scheduleUnlockTime = unlockTime
                         overlayScreen = .outsideSchedule
+                    },
+                    onChannelBrowse: { homeChannel in
+                        browsingChannel = ChannelSearchResult(
+                            channelId: homeChannel.channelId ?? homeChannel.channelName,
+                            name: homeChannel.channelName,
+                            thumbnailUrl: homeChannel.thumbnailUrl
+                        )
                     }
                 )
 

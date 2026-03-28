@@ -60,23 +60,31 @@ struct HomeChannelItemView: View {
                     .overlay(
                         Circle()
                             .stroke(
-                                isHighlighted ? Color.accentColor : Color.clear,
+                                isFocused ? Color.white : Color.clear,
                                 lineWidth: 3
                             )
                     )
 
-                Text(channel.channelName)
-                    .font(.caption2)
-                    .fontWeight(isHighlighted ? .semibold : .regular)
-                    .foregroundColor(isHighlighted ? .primary : .secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .frame(width: 110)
+                VStack(spacing: 2) {
+                    Text(channel.channelName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 110)
+
+                    Text("View Channel ›")
+                        .font(.caption2)
+                        .foregroundColor(AppTheme.textSecondary)
+                        .opacity(isFocused ? 1.0 : 0.0)
+                        .animation(.easeInOut(duration: 0.15), value: isFocused)
+                }
             }
         }
         .buttonStyle(.plain)
         .focused($isFocused)
-        .scaleEffect(isFocused ? 1.1 : 1.0)
+        .scaleEffect(isFocused ? 1.15 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isFocused)
         .onChange(of: isFocused) {
             if isFocused {

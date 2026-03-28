@@ -35,8 +35,8 @@ enum AppTheme {
     // MARK: - Text Colors
 
     static let textPrimary = Color.white
-    static let textSecondary = Color(white: 0.65)
-    static let textMuted = Color(white: 0.4)
+    static let textSecondary = Color(white: 0.78)
+    static let textMuted = Color(white: 0.55)
 
     // MARK: - Sidebar
 

@@ -42,6 +42,7 @@ struct HomeView: View {
     let onSearchSubmitted: (String) -> Void
     let onSwitchProfile: () -> Void
     let onOutsideSchedule: (String) -> Void
+    let onChannelBrowse: (HomeChannel) -> Void
 
     @StateObject private var viewModel = HomeViewModel()
     @State private var searchText = ""
@@ -87,9 +88,7 @@ struct HomeView: View {
                                 viewModel.updateFocusedChannel(channelId: channelId)
                             },
                             onChannelSelected: { channel in
-                                // Filter catalog by channel_name (backend filters on channel_name)
-                                viewModel.selectedChannelFilter = channel.channelName
-                                Task { await viewModel.loadCatalog(childId: child.id, reset: true) }
+                                onChannelBrowse(channel)
                             }
                         )
                         .padding(.bottom, 4)
@@ -285,7 +284,7 @@ struct HomeView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(Color.accentColor.opacity(0.15))
+            .background(Color.accentColor.opacity(0.3))
             .cornerRadius(8)
 
             Spacer()
@@ -505,12 +504,13 @@ struct CategoryFilterView: View {
                     Text(cat.label)
                         .font(.subheadline)
                         .fontWeight(selectedCategory == cat.value ? .bold : .regular)
+                        .foregroundColor(selectedCategory == cat.value ? .white : AppTheme.textSecondary)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
                         .background(
                             selectedCategory == cat.value
-                                ? Color.accentColor.opacity(0.3)
-                                : Color.gray.opacity(0.1)
+                                ? Color.accentColor.opacity(0.5)
+                                : AppTheme.surfaceHighlight
                         )
                         .cornerRadius(8)
                 }
@@ -543,12 +543,13 @@ struct SortPickerView: View {
                     Text(sort.label)
                         .font(.subheadline)
                         .fontWeight(selectedSort == sort ? .bold : .regular)
+                        .foregroundColor(selectedSort == sort ? .white : AppTheme.textSecondary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(
                             selectedSort == sort
-                                ? Color.accentColor.opacity(0.3)
-                                : Color.gray.opacity(0.1)
+                                ? Color.accentColor.opacity(0.5)
+                                : AppTheme.surfaceHighlight
                         )
                         .cornerRadius(8)
                 }
@@ -578,17 +579,18 @@ struct WatchStatusFilterView: View {
                         Text(filter.label)
                         if let counts = statusCounts {
                             Text("(\(countFor(filter, counts: counts)))")
-                                .foregroundColor(.secondary)
+                                .foregroundColor(selectedFilter == filter ? Color.white.opacity(0.75) : AppTheme.textMuted)
                         }
                     }
                     .font(.subheadline)
                     .fontWeight(selectedFilter == filter ? .bold : .regular)
+                    .foregroundColor(selectedFilter == filter ? .white : AppTheme.textSecondary)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
                     .background(
                         selectedFilter == filter
-                            ? Color.accentColor.opacity(0.3)
-                            : Color.gray.opacity(0.1)
+                            ? Color.accentColor.opacity(0.5)
+                            : AppTheme.surfaceHighlight
                     )
                     .cornerRadius(8)
                 }
