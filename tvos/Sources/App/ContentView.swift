@@ -54,6 +54,11 @@ struct ContentView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AuthenticationExpired"))) { _ in
+            // Credentials were cleared after a 401 — reset to pairing screen.
+            selectedChild = nil
+            isPaired = false
+        }
         .onChange(of: selectedChild?.id) {
             // Reset to Home tab when switching profiles
             sidebarSection = .home

@@ -406,6 +406,17 @@ final class APIClient: Sendable {
             } else {
                 detail = String(data: data, encoding: .utf8) ?? "Unknown error"
             }
+            // Stale API key after server DB wipe — clear credentials and signal re-pairing.
+            // Guard on isPaired to avoid posting during the pairing flow itself.
+            if httpResponse.statusCode == 401 && CredentialStore.isPaired {
+                CredentialStore.clear()
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("AuthenticationExpired"),
+                        object: nil
+                    )
+                }
+            }
             throw APIError.httpError(statusCode: httpResponse.statusCode, detail: detail)
         }
 
