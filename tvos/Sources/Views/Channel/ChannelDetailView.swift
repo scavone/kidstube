@@ -10,16 +10,14 @@ struct ChannelDetailView: View {
     let onBack: () -> Void
 
     @StateObject private var viewModel = ChannelDetailViewModel()
-    @State private var columnCount = 4
     @State private var infoItem: VideoInfoItem?
 
-    private var videoRows: [[SearchResult]] {
-        let cols = max(1, columnCount)
-        guard !viewModel.videos.isEmpty else { return [] }
-        return stride(from: 0, to: viewModel.videos.count, by: cols).map { start in
-            Array(viewModel.videos[start..<min(start + cols, viewModel.videos.count)])
-        }
-    }
+    // Adaptive grid lets the focus engine route up/down/left/right between
+    // items without the per-row .focusSection() barriers that prevented the
+    // sidebar from being reachable from the videos area.
+    private let columns = [
+        GridItem(.adaptive(minimum: 280, maximum: 320), spacing: 30)
+    ]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,28 +47,13 @@ struct ChannelDetailView: View {
                 } else if viewModel.videos.isEmpty {
                     noVideos
                 } else {
-                    LazyVStack(spacing: 30) {
-                        ForEach(0..<videoRows.count, id: \.self) { rowIndex in
-                            let row = videoRows[rowIndex]
-                            HStack(spacing: 30) {
-                                ForEach(row) { video in
-                                    videoCard(video)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .focusSection()
+                    LazyVGrid(columns: columns, spacing: 30) {
+                        ForEach(viewModel.videos) { video in
+                            videoCard(video)
                         }
                     }
                     .padding(.horizontal, 60)
                     .padding(.bottom, 40)
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.onAppear {
-                                let cols = max(1, Int((geo.size.width + 30) / (280 + 30)))
-                                if cols != columnCount { columnCount = cols }
-                            }
-                        }
-                    )
                 }
 
                 if let error = viewModel.errorMessage {

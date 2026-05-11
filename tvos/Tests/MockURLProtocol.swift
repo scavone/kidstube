@@ -1,4 +1,12 @@
 import Foundation
+import Testing
+
+/// Parent suite for every test suite that uses ``MockURLProtocol``.
+/// ``MockURLProtocol`` keeps its handler map in static storage, so two suites
+/// running in parallel would clobber each other's mocks. Nesting them inside
+/// a serialized parent forces serial execution across files.
+@Suite(.serialized)
+struct NetworkMockedSuite {}
 
 /// A custom URLProtocol that intercepts network requests for testing.
 /// Thread-safe: uses a lock to protect the handlers dictionary.

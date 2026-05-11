@@ -107,13 +107,13 @@ class SQLiteVideoStore(BaseVideoStore):
             CREATE TABLE IF NOT EXISTS child_channels (
                 child_id INTEGER NOT NULL,
                 channel_name TEXT NOT NULL COLLATE NOCASE,
-                channel_id TEXT,
+                channel_id TEXT NOT NULL,
                 handle TEXT,
                 status TEXT NOT NULL DEFAULT 'allowed',
                 category TEXT,
                 added_at TEXT NOT NULL DEFAULT (datetime('now')),
                 last_refreshed_at TEXT,
-                PRIMARY KEY (child_id, channel_name),
+                PRIMARY KEY (child_id, channel_id),
                 FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
             );
 
@@ -250,6 +250,11 @@ class SQLiteVideoStore(BaseVideoStore):
             self.conn.execute("ALTER TABLE pairing_sessions ADD COLUMN message_id INTEGER")
             self.conn.commit()
 
+        # Switch child_channels PRIMARY KEY from (child_id, channel_name) to
+        # (child_id, channel_id). Required so two channels with the same display
+        # name (e.g. multiple "Ryan" channels) can coexist for one child.
+        self._migrate_child_channels_pk_to_channel_id()
+
         # Migrate global channels -> per-child channels for existing databases.
         # Copy any global channel entries that don't yet exist in child_channels
         # for each child, then leave the global table intact (unused going forward).
@@ -266,16 +271,81 @@ class SQLiteVideoStore(BaseVideoStore):
                 for child_row in children:
                     cid = child_row[0]
                     for ch in global_channels:
+                        ch_id = ch["channel_id"] or f"legacy:{(ch['channel_name'] or '').lower()}"
                         self.conn.execute(
                             """INSERT OR IGNORE INTO child_channels
                                (child_id, channel_name, channel_id, handle, status,
                                 category, added_at, last_refreshed_at)
                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (cid, ch["channel_name"], ch["channel_id"],
+                            (cid, ch["channel_name"], ch_id,
                              ch["handle"], ch["status"], ch["category"],
                              ch["added_at"], ch["last_refreshed_at"]),
                         )
                 self.conn.commit()
+
+    def _migrate_child_channels_pk_to_channel_id(self) -> None:
+        """Rebuild child_channels with PRIMARY KEY (child_id, channel_id).
+
+        Legacy schemas used (child_id, channel_name), which caused channels
+        sharing a display name to overwrite each other. Backfills any rows
+        with a missing channel_id using a 'legacy:<name>' synthetic value so
+        legacy data still uniquely keys.
+        """
+        ch_schema = self.conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='child_channels'"
+        ).fetchone()
+        if not ch_schema or "PRIMARY KEY (child_id, channel_name)" not in (ch_schema[0] or ""):
+            return  # already migrated or table doesn't exist yet
+
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            # Backfill missing channel_ids so the new PK has no nulls/dupes.
+            self.conn.execute(
+                """UPDATE child_channels
+                   SET channel_id = 'legacy:' || LOWER(channel_name)
+                   WHERE channel_id IS NULL OR channel_id = ''"""
+            )
+            # Backfill videos.channel_id from child_channels by name (old
+            # (child_id, channel_name) uniqueness guaranteed no ambiguity).
+            self.conn.execute(
+                """UPDATE videos
+                   SET channel_id = COALESCE(
+                       (SELECT cc.channel_id FROM child_channels cc
+                        WHERE cc.channel_name = videos.channel_name COLLATE NOCASE
+                        LIMIT 1),
+                       'legacy:' || LOWER(channel_name)
+                   )
+                   WHERE channel_id IS NULL OR channel_id = ''"""
+            )
+            # Rebuild the table with the new PK.
+            self.conn.execute("""
+                CREATE TABLE child_channels_new (
+                    child_id INTEGER NOT NULL,
+                    channel_name TEXT NOT NULL COLLATE NOCASE,
+                    channel_id TEXT NOT NULL,
+                    handle TEXT,
+                    status TEXT NOT NULL DEFAULT 'allowed',
+                    category TEXT,
+                    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    last_refreshed_at TEXT,
+                    PRIMARY KEY (child_id, channel_id),
+                    FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+                )
+            """)
+            self.conn.execute("""
+                INSERT OR IGNORE INTO child_channels_new
+                    (child_id, channel_name, channel_id, handle, status, category,
+                     added_at, last_refreshed_at)
+                SELECT child_id, channel_name, channel_id, handle, status, category,
+                       added_at, last_refreshed_at
+                FROM child_channels
+            """)
+            self.conn.execute("DROP TABLE child_channels")
+            self.conn.execute("ALTER TABLE child_channels_new RENAME TO child_channels")
+            self.conn.commit()
+        finally:
+            self.conn.execute("PRAGMA foreign_keys = ON")
 
     # ── Child Profiles ──────────────────────────────────────────────
 
@@ -468,12 +538,16 @@ class SQLiteVideoStore(BaseVideoStore):
         description: Optional[str] = None,
     ) -> dict:
         """Add a video to the catalog. If it already exists, return existing."""
+        # Stored videos must carry a channel_id so they can be joined to
+        # child_channels (keyed by channel_id). Fall back to the same
+        # synthetic 'legacy:<name>' value used by add_channel.
+        effective_channel_id = channel_id or f"legacy:{channel_name.lower()}"
         with self._lock:
             self.conn.execute(
                 """INSERT OR IGNORE INTO videos
                    (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at, description)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (video_id, title, channel_name, channel_id, thumbnail_url, duration, category, published_at, description),
+                (video_id, title, channel_name, effective_channel_id, thumbnail_url, duration, category, published_at, description),
             )
             self.conn.commit()
             row = self.conn.execute(
@@ -513,6 +587,8 @@ class SQLiteVideoStore(BaseVideoStore):
                 if not vid:
                     continue
 
+                ch_name = v.get("channel_name", "")
+                ch_id = v.get("channel_id") or f"legacy:{ch_name.lower()}"
                 cursor = self.conn.execute(
                     """INSERT OR IGNORE INTO videos
                        (video_id, title, channel_name, channel_id,
@@ -521,8 +597,8 @@ class SQLiteVideoStore(BaseVideoStore):
                     (
                         vid,
                         v.get("title", ""),
-                        v.get("channel_name", ""),
-                        v.get("channel_id"),
+                        ch_name,
+                        ch_id,
                         v.get("thumbnail_url"),
                         v.get("duration"),
                         category,
@@ -583,24 +659,24 @@ class SQLiteVideoStore(BaseVideoStore):
         with self._lock:
             # Determine desired status based on channel lists
             video = self.conn.execute(
-                "SELECT channel_name FROM videos WHERE video_id = ?", (video_id,)
+                "SELECT channel_id FROM videos WHERE video_id = ?", (video_id,)
             ).fetchone()
 
             target_status = "pending"
             decided_at = None
 
-            if video:
+            if video and video["channel_id"]:
                 blocked = self.conn.execute(
-                    "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'blocked'",
-                    (child_id, video["channel_name"]),
+                    "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_id = ? AND status = 'blocked'",
+                    (child_id, video["channel_id"]),
                 ).fetchone()
                 if blocked:
                     target_status = "denied"
                     decided_at = "datetime('now')"
                 else:
                     allowed = self.conn.execute(
-                        "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
-                        (child_id, video["channel_name"]),
+                        "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_id = ? AND status = 'allowed'",
+                        (child_id, video["channel_id"]),
                     ).fetchone()
                     if allowed:
                         target_status = "auto_approved"
@@ -715,7 +791,7 @@ class SQLiteVideoStore(BaseVideoStore):
                 where_parts.append("COALESCE(v.category, ch.category, 'fun') = ?")
                 params.append(category)
             if channel:
-                where_parts.append("(v.channel_name = ? COLLATE NOCASE OR v.channel_id = ?)")
+                where_parts.append("(v.channel_id = ? OR v.channel_name = ? COLLATE NOCASE)")
                 params.append(channel)
                 params.append(channel)
 
@@ -726,7 +802,7 @@ class SQLiteVideoStore(BaseVideoStore):
             _from_join = """FROM child_video_access cva
                     JOIN videos v ON cva.video_id = v.video_id
                     LEFT JOIN child_channels ch
-                        ON v.channel_name = ch.channel_name COLLATE NOCASE
+                        ON v.channel_id = ch.channel_id
                         AND ch.child_id = cva.child_id"""
 
             counts_row = self.conn.execute(
@@ -797,7 +873,7 @@ class SQLiteVideoStore(BaseVideoStore):
                    FROM child_video_access cva
                    JOIN videos v ON cva.video_id = v.video_id
                    LEFT JOIN child_channels ch
-                       ON v.channel_name = ch.channel_name COLLATE NOCASE
+                       ON v.channel_id = ch.channel_id
                        AND ch.child_id = cva.child_id
                    WHERE cva.status = 'approved'
                      AND cva.child_id = ?
@@ -1010,7 +1086,7 @@ class SQLiteVideoStore(BaseVideoStore):
                 """SELECT COALESCE(v.category, ch.category, 'fun')
                    FROM videos v
                    LEFT JOIN child_channels ch
-                       ON v.channel_name = ch.channel_name AND ch.child_id = ?
+                       ON v.channel_id = ch.channel_id AND ch.child_id = ?
                    WHERE v.video_id = ?""",
                 (child_id, video_id),
             ).fetchone()
@@ -1135,7 +1211,7 @@ class SQLiteVideoStore(BaseVideoStore):
                 """SELECT COALESCE(v.category, ch.category, 'fun')
                    FROM videos v
                    LEFT JOIN child_channels ch
-                       ON v.channel_name = ch.channel_name AND ch.child_id = ?
+                       ON v.channel_id = ch.channel_id AND ch.child_id = ?
                    WHERE v.video_id = ?""",
                 (child_id, video_id),
             ).fetchone()
@@ -1149,20 +1225,26 @@ class SQLiteVideoStore(BaseVideoStore):
         handle: Optional[str] = None,
         category: Optional[str] = None,
     ) -> bool:
-        """Add or update a channel in a child's allow/block list."""
+        """Add or update a channel in a child's allow/block list.
+
+        Channels are keyed by (child_id, channel_id). If channel_id is not
+        provided, a synthetic 'legacy:<name>' identifier is generated so the
+        row still has a unique key.
+        """
+        effective_id = channel_id or f"legacy:{name.lower()}"
         with self._lock:
             self.conn.execute(
                 """INSERT INTO child_channels
                    (child_id, channel_name, status, channel_id, handle, category)
                    VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(child_id, channel_name) DO UPDATE SET
+                   ON CONFLICT(child_id, channel_id) DO UPDATE SET
+                       channel_name = ?,
                        status = ?,
-                       channel_id = COALESCE(?, channel_id),
                        handle = COALESCE(?, handle),
                        category = COALESCE(?, category),
                        added_at = datetime('now')""",
-                (child_id, name, status, channel_id, handle, category,
-                 status, channel_id, handle, category),
+                (child_id, name, status, effective_id, handle, category,
+                 name, status, handle, category),
             )
             # Retroactively deny all approved/pending videos from this channel for this child
             if status == "blocked":
@@ -1171,9 +1253,9 @@ class SQLiteVideoStore(BaseVideoStore):
                        WHERE child_id = ? AND status IN ('approved', 'pending')
                          AND video_id IN (
                              SELECT video_id FROM videos
-                             WHERE channel_name = ? COLLATE NOCASE
+                             WHERE channel_id = ?
                          )""",
-                    (child_id, name),
+                    (child_id, effective_id),
                 )
             self.conn.commit()
             return True
@@ -1193,8 +1275,8 @@ class SQLiteVideoStore(BaseVideoStore):
                              channel_id=channel_id, handle=handle, category=category)
         return True
 
-    def remove_channel(self, child_id: int, name_or_handle: str) -> tuple[bool, int]:
-        """Remove a channel from a child's list by name or @handle.
+    def remove_channel(self, child_id: int, identifier: str) -> tuple[bool, int]:
+        """Remove a channel from a child's list by channel_id, name, or @handle.
 
         Also revokes (deletes) all video access entries for that channel's
         videos so they no longer appear in the child's catalog.
@@ -1203,17 +1285,19 @@ class SQLiteVideoStore(BaseVideoStore):
         deleted video access rows.
         """
         with self._lock:
-            # Look up the channel_name before deleting
+            # Resolve to a single channel row (channel_id is canonical)
             row = self.conn.execute(
-                """SELECT channel_name FROM child_channels
+                """SELECT channel_id FROM child_channels
                    WHERE child_id = ?
-                     AND (channel_name = ? COLLATE NOCASE OR handle = ? COLLATE NOCASE)""",
-                (child_id, name_or_handle, name_or_handle),
+                     AND (channel_id = ?
+                          OR channel_name = ? COLLATE NOCASE
+                          OR handle = ? COLLATE NOCASE)""",
+                (child_id, identifier, identifier, identifier),
             ).fetchone()
             if not row:
                 return (False, 0)
 
-            channel_name = row[0]
+            channel_id = row[0]
 
             # Remove video access entries for this channel's videos
             cursor = self.conn.execute(
@@ -1221,32 +1305,36 @@ class SQLiteVideoStore(BaseVideoStore):
                    WHERE child_id = ?
                      AND video_id IN (
                          SELECT video_id FROM videos
-                         WHERE channel_name = ? COLLATE NOCASE
+                         WHERE channel_id = ?
                      )""",
-                (child_id, channel_name),
+                (child_id, channel_id),
             )
             video_count = cursor.rowcount
 
             # Remove the channel entry
             self.conn.execute(
                 """DELETE FROM child_channels
-                   WHERE child_id = ? AND channel_name = ? COLLATE NOCASE""",
-                (child_id, channel_name),
+                   WHERE child_id = ? AND channel_id = ?""",
+                (child_id, channel_id),
             )
             self.conn.commit()
             return (True, video_count)
 
-    def count_channel_videos(self, child_id: int, channel_name: str) -> int:
-        """Count video access entries for a channel for a given child."""
+    def count_channel_videos(self, child_id: int, identifier: str) -> int:
+        """Count video access entries for a channel for a given child.
+
+        Accepts a channel_id (preferred) or channel display name.
+        """
         with self._lock:
             row = self.conn.execute(
                 """SELECT COUNT(*) FROM child_video_access
                    WHERE child_id = ?
                      AND video_id IN (
                          SELECT video_id FROM videos
-                         WHERE channel_name = ? COLLATE NOCASE
+                         WHERE channel_id = ?
+                            OR channel_name = ? COLLATE NOCASE
                      )""",
-                (child_id, channel_name),
+                (child_id, identifier, identifier),
             ).fetchone()
             return row[0] if row else 0
 
@@ -1278,16 +1366,16 @@ class SQLiteVideoStore(BaseVideoStore):
                           v.duration as video_duration, v.published_at as video_published_at
                    FROM child_channels cc
                    LEFT JOIN (
-                       SELECT v2.channel_name, v2.video_id, v2.title, v2.thumbnail_url,
+                       SELECT v2.channel_id, v2.video_id, v2.title, v2.thumbnail_url,
                               v2.duration, v2.published_at,
                               ROW_NUMBER() OVER (
-                                  PARTITION BY v2.channel_name
+                                  PARTITION BY v2.channel_id
                                   ORDER BY v2.published_at DESC NULLS LAST
                               ) as rn
                        FROM videos v2
                        JOIN child_video_access cva ON v2.video_id = cva.video_id
                        WHERE cva.child_id = ? AND cva.status = 'approved'
-                   ) v ON v.channel_name = cc.channel_name COLLATE NOCASE AND v.rn = 1
+                   ) v ON v.channel_id = cc.channel_id AND v.rn = 1
                    WHERE cc.child_id = ? AND cc.status = 'allowed'
                    ORDER BY v.published_at DESC NULLS LAST, cc.channel_name ASC""",
                 (child_id, child_id),
@@ -1313,19 +1401,31 @@ class SQLiteVideoStore(BaseVideoStore):
                 results.append(channel)
             return results
 
-    def is_channel_allowed(self, child_id: int, name: str) -> bool:
+    def is_channel_allowed(self, child_id: int, identifier: str) -> bool:
+        """Check whether a channel is allowed for a child.
+
+        Accepts a channel_id (preferred — unambiguous) or a display name
+        (which may match multiple channels if they share a name).
+        """
         with self._lock:
             row = self.conn.execute(
-                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
-                (child_id, name),
+                """SELECT 1 FROM child_channels
+                   WHERE child_id = ?
+                     AND status = 'allowed'
+                     AND (channel_id = ? OR channel_name = ? COLLATE NOCASE)""",
+                (child_id, identifier, identifier),
             ).fetchone()
             return row is not None
 
-    def is_channel_blocked(self, child_id: int, name: str) -> bool:
+    def is_channel_blocked(self, child_id: int, identifier: str) -> bool:
+        """Check whether a channel is blocked for a child. See is_channel_allowed."""
         with self._lock:
             row = self.conn.execute(
-                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'blocked'",
-                (child_id, name),
+                """SELECT 1 FROM child_channels
+                   WHERE child_id = ?
+                     AND status = 'blocked'
+                     AND (channel_id = ? OR channel_name = ? COLLATE NOCASE)""",
+                (child_id, identifier, identifier),
             ).fetchone()
             return row is not None
 
@@ -1338,17 +1438,23 @@ class SQLiteVideoStore(BaseVideoStore):
         If the channel is already allowed/blocked, returns immediately.
         """
         with self._lock:
-            # Check allowed/blocked by channel name
+            # Already blocked/allowed by id (preferred) or by display name (fallback)
             blocked = self.conn.execute(
-                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'blocked'",
-                (child_id, channel_name),
+                """SELECT 1 FROM child_channels
+                   WHERE child_id = ?
+                     AND status = 'blocked'
+                     AND (channel_id = ? OR channel_name = ? COLLATE NOCASE)""",
+                (child_id, channel_id, channel_name),
             ).fetchone()
             if blocked:
                 return "denied"
 
             allowed = self.conn.execute(
-                "SELECT 1 FROM child_channels WHERE child_id = ? AND channel_name = ? COLLATE NOCASE AND status = 'allowed'",
-                (child_id, channel_name),
+                """SELECT 1 FROM child_channels
+                   WHERE child_id = ?
+                     AND status = 'allowed'
+                     AND (channel_id = ? OR channel_name = ? COLLATE NOCASE)""",
+                (child_id, channel_id, channel_name),
             ).fetchone()
             if allowed:
                 return "approved"
@@ -1415,7 +1521,7 @@ class SQLiteVideoStore(BaseVideoStore):
         with self._lock:
             cursor = self.conn.execute(
                 """SELECT * FROM child_channels
-                   WHERE child_id = ? AND status = 'allowed' AND channel_id IS NOT NULL
+                   WHERE child_id = ? AND status = 'allowed' AND channel_id IS NOT NULL AND channel_id NOT LIKE 'legacy:%'
                      AND (last_refreshed_at IS NULL
                           OR last_refreshed_at < datetime('now', ? || ' hours'))
                    ORDER BY last_refreshed_at ASC NULLS FIRST""",
@@ -1423,13 +1529,13 @@ class SQLiteVideoStore(BaseVideoStore):
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_child_ids_for_channel(self, channel_name: str) -> list[int]:
+    def get_child_ids_for_channel(self, channel_id: str) -> list[int]:
         """Return child IDs that have the given channel allowed."""
         with self._lock:
             cursor = self.conn.execute(
                 """SELECT child_id FROM child_channels
-                   WHERE channel_name = ? COLLATE NOCASE AND status = 'allowed'""",
-                (channel_name,),
+                   WHERE channel_id = ? AND status = 'allowed'""",
+                (channel_id,),
             )
             return [row[0] for row in cursor.fetchall()]
 
@@ -1440,7 +1546,7 @@ class SQLiteVideoStore(BaseVideoStore):
                 """SELECT channel_name, channel_id, category,
                           MIN(last_refreshed_at) as last_refreshed_at
                    FROM child_channels
-                   WHERE status = 'allowed' AND channel_id IS NOT NULL
+                   WHERE status = 'allowed' AND channel_id IS NOT NULL AND channel_id NOT LIKE 'legacy:%'
                      AND (last_refreshed_at IS NULL
                           OR last_refreshed_at < datetime('now', ? || ' hours'))
                    GROUP BY channel_id
@@ -1449,23 +1555,23 @@ class SQLiteVideoStore(BaseVideoStore):
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_channel_refreshed_at(self, child_id: int, channel_name: str) -> None:
+    def update_channel_refreshed_at(self, child_id: int, channel_id: str) -> None:
         """Stamp the current time as last_refreshed_at for a child's channel."""
         with self._lock:
             self.conn.execute(
                 """UPDATE child_channels SET last_refreshed_at = datetime('now')
-                   WHERE child_id = ? AND channel_name = ? COLLATE NOCASE""",
-                (child_id, channel_name),
+                   WHERE child_id = ? AND channel_id = ?""",
+                (child_id, channel_id),
             )
             self.conn.commit()
 
-    def update_all_channels_refreshed_at(self, channel_name: str) -> None:
+    def update_all_channels_refreshed_at(self, channel_id: str) -> None:
         """Stamp last_refreshed_at for a channel across all children."""
         with self._lock:
             self.conn.execute(
                 """UPDATE child_channels SET last_refreshed_at = datetime('now')
-                   WHERE channel_name = ? COLLATE NOCASE""",
-                (channel_name,),
+                   WHERE channel_id = ?""",
+                (channel_id,),
             )
             self.conn.commit()
 

@@ -154,20 +154,23 @@ class PostgresVideoStore(BaseVideoStore):
             )""",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_channels_name_ci ON channels (LOWER(channel_name))",
 
-            # Per-child channels: case-insensitive uniqueness via expression index
+            # Per-child channels: primary identifier is YouTube's channel_id.
+            # Display-name uniqueness was the old rule, but that caused two
+            # different channels sharing a display name (e.g. multiple "Ryan"
+            # channels) to overwrite each other. Channel rows are now keyed
+            # on (child_id, channel_id).
             f"""CREATE TABLE IF NOT EXISTS child_channels (
                 child_id INTEGER NOT NULL,
                 channel_name TEXT NOT NULL,
-                channel_id TEXT,
+                channel_id TEXT NOT NULL,
                 handle TEXT,
                 status TEXT NOT NULL DEFAULT 'allowed',
                 category TEXT,
                 added_at TEXT NOT NULL DEFAULT {_now_default},
                 last_refreshed_at TEXT,
+                PRIMARY KEY (child_id, channel_id),
                 FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
             )""",
-            """CREATE UNIQUE INDEX IF NOT EXISTS uq_child_channels_ci
-               ON child_channels (child_id, LOWER(channel_name))""",
 
             f"""CREATE TABLE IF NOT EXISTS channel_requests (
                 child_id INTEGER NOT NULL,
@@ -303,6 +306,12 @@ class PostgresVideoStore(BaseVideoStore):
                     cur.execute("ALTER TABLE pairing_sessions ADD COLUMN chat_id INTEGER")
                     cur.execute("ALTER TABLE pairing_sessions ADD COLUMN message_id INTEGER")
 
+            # Switch child_channels key from (child_id, LOWER(channel_name))
+            # to (child_id, channel_id). Channels sharing a display name
+            # collided under the old scheme.
+            if "child_channels" in tbl:
+                self._migrate_child_channels_pk_to_channel_id(cur)
+
             # Migrate global channels → per-child channels
             if "child_channels" in tbl:
                 cur.execute("SELECT id FROM children")
@@ -313,16 +322,17 @@ class PostgresVideoStore(BaseVideoStore):
                     for child_row in children:
                         cid = child_row["id"]
                         for ch in global_channels:
+                            ch_id = ch["channel_id"] or f"legacy:{(ch['channel_name'] or '').lower()}"
                             cur.execute(
                                 """INSERT INTO child_channels
                                    (child_id, channel_name, channel_id, handle, status,
                                     category, added_at, last_refreshed_at)
                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                                   ON CONFLICT (child_id, LOWER(channel_name)) DO NOTHING""",
+                                   ON CONFLICT (child_id, channel_id) DO NOTHING""",
                                 (
                                     cid,
                                     ch["channel_name"],
-                                    ch["channel_id"],
+                                    ch_id,
                                     ch["handle"],
                                     ch["status"],
                                     ch["category"],
@@ -331,6 +341,55 @@ class PostgresVideoStore(BaseVideoStore):
                                 ),
                             )
         self.conn.commit()
+
+    def _migrate_child_channels_pk_to_channel_id(self, cur) -> None:
+        """Backfill channel_ids and switch the table key to (child_id, channel_id).
+
+        Idempotent: if the new primary key is already present, this is a no-op.
+        Legacy rows missing channel_id are assigned a 'legacy:<name>' synthetic
+        identifier so existing data continues to key uniquely.
+        """
+        cur.execute(
+            """SELECT 1 FROM information_schema.table_constraints
+               WHERE table_schema = 'public'
+                 AND table_name = 'child_channels'
+                 AND constraint_type = 'PRIMARY KEY'"""
+        )
+        if cur.fetchone():
+            return  # already migrated
+
+        # Backfill missing channel_ids in child_channels.
+        cur.execute(
+            """UPDATE child_channels
+               SET channel_id = 'legacy:' || LOWER(channel_name)
+               WHERE channel_id IS NULL OR channel_id = ''"""
+        )
+        # If multiple rows now share (child_id, channel_id), keep one.
+        cur.execute(
+            """DELETE FROM child_channels a USING child_channels b
+               WHERE a.ctid < b.ctid
+                 AND a.child_id = b.child_id
+                 AND a.channel_id = b.channel_id"""
+        )
+        # Backfill videos.channel_id from channel rows by display name.
+        # Old uniqueness on (child_id, channel_name) guaranteed no ambiguity
+        # for legacy data, so a single lookup per name is safe.
+        cur.execute(
+            """UPDATE videos v
+               SET channel_id = COALESCE(
+                   (SELECT cc.channel_id FROM child_channels cc
+                    WHERE LOWER(cc.channel_name) = LOWER(v.channel_name)
+                    LIMIT 1),
+                   'legacy:' || LOWER(v.channel_name)
+               )
+               WHERE v.channel_id IS NULL OR v.channel_id = ''"""
+        )
+        cur.execute("ALTER TABLE child_channels ALTER COLUMN channel_id SET NOT NULL")
+        cur.execute(
+            "ALTER TABLE child_channels "
+            "ADD CONSTRAINT child_channels_pkey PRIMARY KEY (child_id, channel_id)"
+        )
+        cur.execute("DROP INDEX IF EXISTS uq_child_channels_ci")
 
     # ── Child Profiles ──────────────────────────────────────────────
 
@@ -519,6 +578,9 @@ class PostgresVideoStore(BaseVideoStore):
         published_at: Optional[int] = None,
         description: Optional[str] = None,
     ) -> dict:
+        # Synthetic channel_id keeps name-only callers compatible with the
+        # channel_id-keyed schema.
+        effective_channel_id = channel_id or f"legacy:{channel_name.lower()}"
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
@@ -528,7 +590,7 @@ class PostgresVideoStore(BaseVideoStore):
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                        ON CONFLICT (video_id) DO NOTHING""",
                     (
-                        video_id, title, channel_name, channel_id, thumbnail_url,
+                        video_id, title, channel_name, effective_channel_id, thumbnail_url,
                         duration, category, published_at, description,
                     ),
                 )
@@ -563,6 +625,8 @@ class PostgresVideoStore(BaseVideoStore):
                     vid = v.get("video_id")
                     if not vid:
                         continue
+                    ch_name = v.get("channel_name", "")
+                    ch_id = v.get("channel_id") or f"legacy:{ch_name.lower()}"
                     cur.execute(
                         """INSERT INTO videos
                            (video_id, title, channel_name, channel_id,
@@ -572,8 +636,8 @@ class PostgresVideoStore(BaseVideoStore):
                         (
                             vid,
                             v.get("title", ""),
-                            v.get("channel_name", ""),
-                            v.get("channel_id"),
+                            ch_name,
+                            ch_id,
                             v.get("thumbnail_url"),
                             v.get("duration"),
                             category,
@@ -627,19 +691,19 @@ class PostgresVideoStore(BaseVideoStore):
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
-                    "SELECT channel_name FROM videos WHERE video_id = %s", (video_id,)
+                    "SELECT channel_id FROM videos WHERE video_id = %s", (video_id,)
                 )
                 video = cur.fetchone()
 
                 target_status = "pending"
                 decided_at = None
 
-                if video:
+                if video and video["channel_id"]:
                     cur.execute(
                         """SELECT 1 FROM child_channels
-                           WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)
+                           WHERE child_id = %s AND channel_id = %s
                              AND status = 'blocked'""",
-                        (child_id, video["channel_name"]),
+                        (child_id, video["channel_id"]),
                     )
                     if cur.fetchone():
                         target_status = "denied"
@@ -647,9 +711,9 @@ class PostgresVideoStore(BaseVideoStore):
                     else:
                         cur.execute(
                             """SELECT 1 FROM child_channels
-                               WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)
+                               WHERE child_id = %s AND channel_id = %s
                                  AND status = 'allowed'""",
-                            (child_id, video["channel_name"]),
+                            (child_id, video["channel_id"]),
                         )
                         if cur.fetchone():
                             target_status = "auto_approved"
@@ -757,7 +821,7 @@ class PostgresVideoStore(BaseVideoStore):
                 params.append(category)
             if channel:
                 where_parts.append(
-                    "(LOWER(v.channel_name) = LOWER(%s) OR v.channel_id = %s)"
+                    "(v.channel_id = %s OR LOWER(v.channel_name) = LOWER(%s))"
                 )
                 params.append(channel)
                 params.append(channel)
@@ -768,7 +832,7 @@ class PostgresVideoStore(BaseVideoStore):
             _from_join = """FROM child_video_access cva
                     JOIN videos v ON cva.video_id = v.video_id
                     LEFT JOIN child_channels ch
-                        ON LOWER(v.channel_name) = LOWER(ch.channel_name)
+                        ON v.channel_id = ch.channel_id
                         AND ch.child_id = cva.child_id"""
 
             with self._cur() as cur:
@@ -841,7 +905,7 @@ class PostgresVideoStore(BaseVideoStore):
                        FROM child_video_access cva
                        JOIN videos v ON cva.video_id = v.video_id
                        LEFT JOIN child_channels ch
-                           ON LOWER(v.channel_name) = LOWER(ch.channel_name)
+                           ON v.channel_id = ch.channel_id
                            AND ch.child_id = cva.child_id
                        WHERE cva.status = 'approved'
                          AND cva.child_id = %s
@@ -1045,7 +1109,7 @@ class PostgresVideoStore(BaseVideoStore):
                     """SELECT COALESCE(v.category, ch.category, 'fun') AS cat
                        FROM videos v
                        LEFT JOIN child_channels ch
-                           ON LOWER(v.channel_name) = LOWER(ch.channel_name)
+                           ON v.channel_id = ch.channel_id
                            AND ch.child_id = %s
                        WHERE v.video_id = %s""",
                     (child_id, video_id),
@@ -1199,7 +1263,7 @@ class PostgresVideoStore(BaseVideoStore):
                     """SELECT COALESCE(v.category, ch.category, 'fun') AS cat
                        FROM videos v
                        LEFT JOIN child_channels ch
-                           ON LOWER(v.channel_name) = LOWER(ch.channel_name)
+                           ON v.channel_id = ch.channel_id
                            AND ch.child_id = %s
                        WHERE v.video_id = %s""",
                     (child_id, video_id),
@@ -1218,19 +1282,20 @@ class PostgresVideoStore(BaseVideoStore):
         handle: Optional[str] = None,
         category: Optional[str] = None,
     ) -> bool:
+        effective_id = channel_id or f"legacy:{name.lower()}"
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
                     """INSERT INTO child_channels
                        (child_id, channel_name, status, channel_id, handle, category, added_at)
                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                       ON CONFLICT (child_id, LOWER(channel_name)) DO UPDATE SET
+                       ON CONFLICT (child_id, channel_id) DO UPDATE SET
+                           channel_name = EXCLUDED.channel_name,
                            status = EXCLUDED.status,
-                           channel_id = COALESCE(EXCLUDED.channel_id, child_channels.channel_id),
                            handle = COALESCE(EXCLUDED.handle, child_channels.handle),
                            category = COALESCE(EXCLUDED.category, child_channels.category),
                            added_at = EXCLUDED.added_at""",
-                    (child_id, name, status, channel_id, handle, category, _now()),
+                    (child_id, name, status, effective_id, handle, category, _now()),
                 )
                 if status == "blocked":
                     cur.execute(
@@ -1239,9 +1304,9 @@ class PostgresVideoStore(BaseVideoStore):
                            WHERE child_id = %s AND status IN ('approved', 'pending')
                              AND video_id IN (
                                  SELECT video_id FROM videos
-                                 WHERE LOWER(channel_name) = LOWER(%s)
+                                 WHERE channel_id = %s
                              )""",
-                        (_now(), child_id, name),
+                        (_now(), child_id, effective_id),
                     )
             self.conn.commit()
             return True
@@ -1264,38 +1329,40 @@ class PostgresVideoStore(BaseVideoStore):
             )
         return True
 
-    def remove_channel(self, child_id: int, name_or_handle: str) -> tuple[bool, int]:
+    def remove_channel(self, child_id: int, identifier: str) -> tuple[bool, int]:
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
-                    """SELECT channel_name FROM child_channels
+                    """SELECT channel_id FROM child_channels
                        WHERE child_id = %s
-                         AND (LOWER(channel_name) = LOWER(%s) OR LOWER(handle) = LOWER(%s))""",
-                    (child_id, name_or_handle, name_or_handle),
+                         AND (channel_id = %s
+                              OR LOWER(channel_name) = LOWER(%s)
+                              OR LOWER(handle) = LOWER(%s))""",
+                    (child_id, identifier, identifier, identifier),
                 )
                 row = cur.fetchone()
                 if not row:
                     return (False, 0)
-                channel_name = row["channel_name"]
+                channel_id = row["channel_id"]
                 cur.execute(
                     """DELETE FROM child_video_access
                        WHERE child_id = %s
                          AND video_id IN (
                              SELECT video_id FROM videos
-                             WHERE LOWER(channel_name) = LOWER(%s)
+                             WHERE channel_id = %s
                          )""",
-                    (child_id, channel_name),
+                    (child_id, channel_id),
                 )
                 video_count = cur.rowcount
                 cur.execute(
                     """DELETE FROM child_channels
-                       WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)""",
-                    (child_id, channel_name),
+                       WHERE child_id = %s AND channel_id = %s""",
+                    (child_id, channel_id),
                 )
             self.conn.commit()
             return (True, video_count)
 
-    def count_channel_videos(self, child_id: int, channel_name: str) -> int:
+    def count_channel_videos(self, child_id: int, identifier: str) -> int:
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
@@ -1303,9 +1370,10 @@ class PostgresVideoStore(BaseVideoStore):
                        WHERE child_id = %s
                          AND video_id IN (
                              SELECT video_id FROM videos
-                             WHERE LOWER(channel_name) = LOWER(%s)
+                             WHERE channel_id = %s
+                                OR LOWER(channel_name) = LOWER(%s)
                          )""",
-                    (child_id, channel_name),
+                    (child_id, identifier, identifier),
                 )
                 row = cur.fetchone()
                 return row["cnt"] if row else 0
@@ -1334,16 +1402,16 @@ class PostgresVideoStore(BaseVideoStore):
                               v.duration as video_duration, v.published_at as video_published_at
                        FROM child_channels cc
                        LEFT JOIN (
-                           SELECT v2.channel_name, v2.video_id, v2.title, v2.thumbnail_url,
+                           SELECT v2.channel_id, v2.video_id, v2.title, v2.thumbnail_url,
                                   v2.duration, v2.published_at,
                                   ROW_NUMBER() OVER (
-                                      PARTITION BY LOWER(v2.channel_name)
+                                      PARTITION BY v2.channel_id
                                       ORDER BY v2.published_at DESC NULLS LAST
                                   ) as rn
                            FROM videos v2
                            JOIN child_video_access cva ON v2.video_id = cva.video_id
                            WHERE cva.child_id = %s AND cva.status = 'approved'
-                       ) v ON LOWER(v.channel_name) = LOWER(cc.channel_name) AND v.rn = 1
+                       ) v ON v.channel_id = cc.channel_id AND v.rn = 1
                        WHERE cc.child_id = %s AND cc.status = 'allowed'
                        ORDER BY v.published_at DESC NULLS LAST, cc.channel_name ASC""",
                     (child_id, child_id),
@@ -1369,25 +1437,27 @@ class PostgresVideoStore(BaseVideoStore):
                     results.append(channel)
                 return results
 
-    def is_channel_allowed(self, child_id: int, name: str) -> bool:
+    def is_channel_allowed(self, child_id: int, identifier: str) -> bool:
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
                     """SELECT 1 FROM child_channels
-                       WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)
-                         AND status = 'allowed'""",
-                    (child_id, name),
+                       WHERE child_id = %s
+                         AND status = 'allowed'
+                         AND (channel_id = %s OR LOWER(channel_name) = LOWER(%s))""",
+                    (child_id, identifier, identifier),
                 )
                 return cur.fetchone() is not None
 
-    def is_channel_blocked(self, child_id: int, name: str) -> bool:
+    def is_channel_blocked(self, child_id: int, identifier: str) -> bool:
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
                     """SELECT 1 FROM child_channels
-                       WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)
-                         AND status = 'blocked'""",
-                    (child_id, name),
+                       WHERE child_id = %s
+                         AND status = 'blocked'
+                         AND (channel_id = %s OR LOWER(channel_name) = LOWER(%s))""",
+                    (child_id, identifier, identifier),
                 )
                 return cur.fetchone() is not None
 
@@ -1398,17 +1468,19 @@ class PostgresVideoStore(BaseVideoStore):
             with self._cur() as cur:
                 cur.execute(
                     """SELECT 1 FROM child_channels
-                       WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)
-                         AND status = 'blocked'""",
-                    (child_id, channel_name),
+                       WHERE child_id = %s
+                         AND status = 'blocked'
+                         AND (channel_id = %s OR LOWER(channel_name) = LOWER(%s))""",
+                    (child_id, channel_id, channel_name),
                 )
                 if cur.fetchone():
                     return "denied"
                 cur.execute(
                     """SELECT 1 FROM child_channels
-                       WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)
-                         AND status = 'allowed'""",
-                    (child_id, channel_name),
+                       WHERE child_id = %s
+                         AND status = 'allowed'
+                         AND (channel_id = %s OR LOWER(channel_name) = LOWER(%s))""",
+                    (child_id, channel_id, channel_name),
                 )
                 if cur.fetchone():
                     return "approved"
@@ -1485,20 +1557,20 @@ class PostgresVideoStore(BaseVideoStore):
             with self._cur() as cur:
                 cur.execute(
                     """SELECT * FROM child_channels
-                       WHERE child_id = %s AND status = 'allowed' AND channel_id IS NOT NULL
+                       WHERE child_id = %s AND status = 'allowed' AND channel_id IS NOT NULL AND channel_id NOT LIKE 'legacy:%'
                          AND (last_refreshed_at IS NULL OR last_refreshed_at < %s)
                        ORDER BY last_refreshed_at ASC NULLS FIRST""",
                     (child_id, cutoff),
                 )
                 return [dict(r) for r in cur.fetchall()]
 
-    def get_child_ids_for_channel(self, channel_name: str) -> list[int]:
+    def get_child_ids_for_channel(self, channel_id: str) -> list[int]:
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
                     """SELECT child_id FROM child_channels
-                       WHERE LOWER(channel_name) = LOWER(%s) AND status = 'allowed'""",
-                    (channel_name,),
+                       WHERE channel_id = %s AND status = 'allowed'""",
+                    (channel_id,),
                 )
                 return [row["child_id"] for row in cur.fetchall()]
 
@@ -1510,7 +1582,7 @@ class PostgresVideoStore(BaseVideoStore):
                     """SELECT channel_name, channel_id, category,
                               MIN(last_refreshed_at) as last_refreshed_at
                        FROM child_channels
-                       WHERE status = 'allowed' AND channel_id IS NOT NULL
+                       WHERE status = 'allowed' AND channel_id IS NOT NULL AND channel_id NOT LIKE 'legacy:%'
                          AND (last_refreshed_at IS NULL OR last_refreshed_at < %s)
                        GROUP BY channel_id, channel_name, category
                        ORDER BY last_refreshed_at ASC NULLS FIRST""",
@@ -1518,23 +1590,23 @@ class PostgresVideoStore(BaseVideoStore):
                 )
                 return [dict(r) for r in cur.fetchall()]
 
-    def update_channel_refreshed_at(self, child_id: int, channel_name: str) -> None:
+    def update_channel_refreshed_at(self, child_id: int, channel_id: str) -> None:
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
                     """UPDATE child_channels SET last_refreshed_at = %s
-                       WHERE child_id = %s AND LOWER(channel_name) = LOWER(%s)""",
-                    (_now(), child_id, channel_name),
+                       WHERE child_id = %s AND channel_id = %s""",
+                    (_now(), child_id, channel_id),
                 )
             self.conn.commit()
 
-    def update_all_channels_refreshed_at(self, channel_name: str) -> None:
+    def update_all_channels_refreshed_at(self, channel_id: str) -> None:
         with self._lock:
             with self._cur() as cur:
                 cur.execute(
                     """UPDATE child_channels SET last_refreshed_at = %s
-                       WHERE LOWER(channel_name) = LOWER(%s)""",
-                    (_now(), channel_name),
+                       WHERE channel_id = %s""",
+                    (_now(), channel_id),
                 )
             self.conn.commit()
 

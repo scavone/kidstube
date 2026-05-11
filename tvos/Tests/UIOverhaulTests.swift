@@ -64,6 +64,7 @@ struct RecentlyAddedResponseTests {
 
 // MARK: - APIClient Recently Added Tests
 
+extension NetworkMockedSuite {
 @Suite("APIClient RecentlyAdded", .serialized)
 struct APIClientRecentlyAddedTests {
 
@@ -124,6 +125,7 @@ struct APIClientRecentlyAddedTests {
         }
     }
 }
+}  // extension NetworkMockedSuite
 
 // MARK: - AppTheme & SidebarSection Tests
 //
