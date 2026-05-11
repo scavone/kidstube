@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import KidsTubeCore
 
+extension NetworkMockedSuite {
 @Suite("APIClient", .serialized)
 struct APIClientTests {
 
@@ -603,3 +604,4 @@ struct APIClientTests {
         #expect(status.inCooldown == false)
     }
 }
+}  // extension NetworkMockedSuite

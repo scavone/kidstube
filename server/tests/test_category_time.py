@@ -129,13 +129,16 @@ class TestCategoryBonus:
 # ── VideoStore: category watch minutes ──────────────────────────────
 
 class TestCategoryWatchMinutes:
-    def _insert_watch(self, store, video_id, child_id, seconds, category):
+    def _insert_watch(
+        self, store, video_id, child_id, seconds, category,
+        watched_at: str = "2026-03-24T12:00:00",
+    ):
         """Direct DB insert with explicit category for testing."""
         with store._lock:
             store.conn.execute(
                 "INSERT INTO watch_log (video_id, child_id, duration, category, watched_at)"
-                " VALUES (?, ?, ?, ?, datetime('now'))",
-                (video_id, child_id, seconds, category),
+                " VALUES (?, ?, ?, ?, ?)",
+                (video_id, child_id, seconds, category, watched_at),
             )
             store.conn.commit()
 

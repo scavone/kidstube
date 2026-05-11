@@ -135,6 +135,7 @@ struct HomeChannelsResponseTests {
 
 // MARK: - APIClient Home Channels Tests
 
+extension NetworkMockedSuite {
 @Suite("APIClient Home Channels", .serialized)
 struct APIClientHomeChannelsTests {
 
@@ -225,6 +226,7 @@ struct APIClientHomeChannelsTests {
         // Test plan: verify proper error for missing/wrong API key
     }
 }
+}  // extension NetworkMockedSuite
 
 // MARK: - Focus-Driven Banner Update (View State)
 
