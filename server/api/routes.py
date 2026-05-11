@@ -17,6 +17,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -316,9 +317,13 @@ async def search_videos(
             if blocked and r.get("name", "").lower() in blocked:
                 continue
             # Annotate with channel status for the child
-            ch_name = r.get("name", "")
             ch_id = r.get("channel_id", "")
-            if ch_name and video_store.is_channel_allowed(child_id, ch_name):
+            ch_name = r.get("name", "")
+            already_allowed = (
+                (ch_id and video_store.is_channel_allowed(child_id, ch_id))
+                or (ch_name and video_store.is_channel_allowed(child_id, ch_name))
+            )
+            if already_allowed:
                 r["channel_status"] = "allowed"
             elif ch_id:
                 req_status = video_store.get_channel_request_status(child_id, ch_id)
@@ -340,13 +345,18 @@ async def search_videos(
             vid = r.get("video_id", "")
             status = video_store.get_video_status(child_id, vid)
             if status is None:
+                ch_id = r.get("channel_id", "")
                 ch_name = r.get("channel_name", "")
-                if ch_name and video_store.is_channel_allowed(child_id, ch_name):
+                is_allowed = (
+                    (ch_id and video_store.is_channel_allowed(child_id, ch_id))
+                    or (ch_name and video_store.is_channel_allowed(child_id, ch_name))
+                )
+                if is_allowed:
                     video_store.add_video(
                         video_id=vid,
                         title=r.get("title", ""),
                         channel_name=ch_name,
-                        channel_id=r.get("channel_id"),
+                        channel_id=ch_id or None,
                         thumbnail_url=r.get("thumbnail_url"),
                         duration=r.get("duration"),
                         published_at=r.get("published"),
@@ -803,18 +813,20 @@ async def get_channels_home(child_id: int = Query(..., gt=0)):
 
     channels_data = video_store.get_channels_with_latest_video(child_id)
 
-    # Fetch channel metadata from Invidious in parallel for channels with IDs
+    # Fetch channel metadata from Invidious in parallel for channels with
+    # real channel_ids. Synthetic 'legacy:' ids cannot be resolved.
     async def enrich_channel(ch: dict) -> ChannelHomeItem:
         thumbnail_url = None
         banner_url = None
-        if ch.get("channel_id"):
+        cid = ch.get("channel_id")
+        if cid and not cid.startswith("legacy:"):
             try:
-                info = await invidious_client.get_channel_info(ch["channel_id"])
+                info = await invidious_client.get_channel_info(cid)
                 if info:
                     thumbnail_url = info.get("thumbnail_url")
                     banner_url = info.get("banner_url")
             except Exception:
-                logger.warning("Failed to fetch channel info for %s", ch["channel_id"])
+                logger.warning("Failed to fetch channel info for %s", cid)
 
         latest_video = ch.get("latest_video")
         if latest_video:
@@ -857,13 +869,18 @@ async def get_channel_videos(
         vid = v.get("video_id", "")
         status = video_store.get_video_status(child_id, vid)
         if status is None:
+            ch_id = v.get("channel_id") or channel_id
             ch_name = v.get("channel_name", "")
-            if ch_name and video_store.is_channel_allowed(child_id, ch_name):
+            is_allowed = (
+                (ch_id and video_store.is_channel_allowed(child_id, ch_id))
+                or (ch_name and video_store.is_channel_allowed(child_id, ch_name))
+            )
+            if is_allowed:
                 video_store.add_video(
                     video_id=vid,
                     title=v.get("title", ""),
                     channel_name=ch_name,
-                    channel_id=v.get("channel_id"),
+                    channel_id=ch_id,
                     thumbnail_url=v.get("thumbnail_url"),
                     duration=v.get("duration"),
                     published_at=v.get("published"),
@@ -1006,8 +1023,9 @@ async def get_starter_channels(child_id: int = Query(0, ge=0)):
 async def import_starter_channels(body: ImportStarterChannelsBody):
     """Import selected starter channels for a child.
 
-    Accepts a list of @handles. Adds them to the child's allowed channels
-    with lazy channel_id resolution (no network calls).
+    Accepts a list of @handles. Resolves each @handle to a real channel_id
+    via Invidious so the channel can be refreshed and so name collisions
+    between channels never overwrite each other.
     """
     child = video_store.get_child(body.child_id)
     if not child:
@@ -1015,7 +1033,6 @@ async def import_starter_channels(body: ImportStarterChannelsBody):
 
     data = _load_starter_channels()
 
-    # Build lookup of handle -> channel info
     handle_lookup: dict[str, dict] = {}
     for category, channels_list in data.items():
         for ch in channels_list:
@@ -1023,21 +1040,41 @@ async def import_starter_channels(body: ImportStarterChannelsBody):
             if h:
                 handle_lookup[h.lower()] = {**ch, "category_key": category}
 
-    imported = []
-    for handle in body.handles:
+    async def resolve(handle: str) -> Optional[dict]:
         info = handle_lookup.get(handle.lower())
         if not info:
-            continue
-        # Map category key to edu/fun
+            return None
         cat_key = info.get("category_key", "fun")
         category = "edu" if cat_key in ("educational", "science") else "fun"
-        name = info.get("name", handle)
+        resolved = None
+        try:
+            resolved = await invidious_client.resolve_channel_by_handle(
+                info.get("handle", "")
+            )
+        except Exception:
+            logger.warning("Failed to resolve starter channel %s", handle)
+        return {
+            "handle": info.get("handle"),
+            "name": (resolved or {}).get("name") or info.get("name", handle),
+            "channel_id": (resolved or {}).get("channel_id"),
+            "category": category,
+        }
+
+    resolved_list = await asyncio.gather(*[resolve(h) for h in body.handles])
+
+    imported = []
+    for h, resolved in zip(body.handles, resolved_list):
+        if not resolved:
+            continue
         video_store.add_channel(
-            body.child_id, name, "allowed",
-            handle=info.get("handle"),
-            category=category,
+            body.child_id,
+            resolved["name"],
+            "allowed",
+            channel_id=resolved["channel_id"],
+            handle=resolved["handle"],
+            category=resolved["category"],
         )
-        imported.append(handle)
+        imported.append(h)
 
     return {"imported": imported, "count": len(imported), "child_id": body.child_id}
 

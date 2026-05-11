@@ -458,28 +458,40 @@ class TelegramBot:
             page = int(parts[2])
             await self._show_channel_page(query.message, child_id, page)
             return
-        # Channel delete request: chan_del:child_id:page:channel_name
+        # Channel delete request: chan_del:child_id:page:channel_id
         if action == "chan_del" and len(parts) >= 4:
             child_id = int(parts[1])
             page = int(parts[2])
-            ch_name = ":".join(parts[3:])
-            video_count = self.video_store.count_channel_videos(child_id, ch_name)
+            ch_id = ":".join(parts[3:])
+            video_count = self.video_store.count_channel_videos(child_id, ch_id)
             child = self.video_store.get_child(child_id)
             child_name = child["name"] if child else f"Child#{child_id}"
+            ch_row = next(
+                (c for c in self.video_store.get_channels(child_id)
+                 if c.get("channel_id") == ch_id),
+                None,
+            )
+            ch_name = ch_row["channel_name"] if ch_row else ch_id
             vid_info = f" and <b>{video_count}</b> associated video(s)" if video_count else " (no associated videos)"
             text = f"Remove <b>{_esc(ch_name)}</b>{vid_info} from {_esc(child_name)}'s library?"
             keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("Yes, remove", callback_data=f"chan_del_yes:{child_id}:{page}:{ch_name}"),
+                InlineKeyboardButton("Yes, remove", callback_data=f"chan_del_yes:{child_id}:{page}:{ch_id}"),
                 InlineKeyboardButton("Cancel", callback_data=f"chan_del_no:{child_id}:{page}"),
             ]])
             await self._send_or_edit(query.message, text, keyboard=keyboard)
             return
-        # Channel delete confirm: chan_del_yes:child_id:page:channel_name
+        # Channel delete confirm: chan_del_yes:child_id:page:channel_id
         if action == "chan_del_yes" and len(parts) >= 4:
             child_id = int(parts[1])
             page = int(parts[2])
-            ch_name = ":".join(parts[3:])
-            success, video_count = self.video_store.remove_channel(child_id, ch_name)
+            ch_id = ":".join(parts[3:])
+            ch_row = next(
+                (c for c in self.video_store.get_channels(child_id)
+                 if c.get("channel_id") == ch_id),
+                None,
+            )
+            ch_name = ch_row["channel_name"] if ch_row else ch_id
+            success, video_count = self.video_store.remove_channel(child_id, ch_id)
             child = self.video_store.get_child(child_id)
             child_name = child["name"] if child else f"Child#{child_id}"
             if success:
@@ -741,7 +753,7 @@ class TelegramBot:
 
                 # Best-effort: import channel videos for this child
                 import_count = 0
-                if self.inv_client and ch_id:
+                if self.inv_client and ch_id and not ch_id.startswith("legacy:"):
                     try:
                         channel_videos = await self.inv_client.get_channel_videos(ch_id)
                         import_count = self.video_store.bulk_import_channel_videos(
@@ -1589,9 +1601,28 @@ class TelegramBot:
         # /channel [ChildName] block <name>
         elif subcmd == "block" and len(sub_args) >= 2:
             name = " ".join(sub_args[1:])
-            self.video_store.add_channel(child_id, name, "blocked")
+            # Resolve to a real channel_id so the retroactive block can match
+            # videos in the catalog (which are keyed by channel_id).
+            channel_id = None
+            display_name = name
+            handle = name if name.startswith("@") else None
+            if self.inv_client:
+                try:
+                    info = await self.inv_client.resolve_channel_by_handle(
+                        handle or name
+                    )
+                    if info:
+                        channel_id = info["channel_id"]
+                        display_name = info["name"] or name
+                        handle = handle or info.get("handle")
+                except Exception:
+                    logger.warning("Failed to resolve channel %s via Invidious", name)
+            self.video_store.add_channel(
+                child_id, display_name, "blocked",
+                channel_id=channel_id, handle=handle,
+            )
             await update.effective_message.reply_text(
-                f"Channel <b>{_esc(name)}</b> blocked for {_esc(child_name)}.",
+                f"Channel <b>{_esc(display_name)}</b> blocked for {_esc(child_name)}.",
                 parse_mode=ParseMode.HTML,
             )
 
@@ -1653,20 +1684,22 @@ class TelegramBot:
                 cat = ch.get("category", "")
                 cat_tag = f" [{cat}]" if cat else ""
                 ch_name = ch["channel_name"]
+                ch_id = ch["channel_id"]
                 lines.append(f"  + {_esc(ch_name)}{cat_tag}")
                 rows.append([InlineKeyboardButton(
                     f"❌ {ch_name}",
-                    callback_data=f"chan_del:{child_id}:{page}:{ch_name}",
+                    callback_data=f"chan_del:{child_id}:{page}:{ch_id}",
                 )])
 
         if blocked:
             lines.append(f"\n<b>Blocked Channels for {_esc(child_name)} ({len(blocked)})</b>")
             for ch in blocked[:_CHANNEL_PAGE_SIZE]:
                 ch_name = ch["channel_name"]
+                ch_id = ch["channel_id"]
                 lines.append(f"  - {_esc(ch_name)}")
                 rows.append([InlineKeyboardButton(
                     f"❌ {ch_name}",
-                    callback_data=f"chan_del:{child_id}:{page}:{ch_name}",
+                    callback_data=f"chan_del:{child_id}:{page}:{ch_id}",
                 )])
 
         total = len(allowed)  # paginate allowed only

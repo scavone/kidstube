@@ -79,7 +79,7 @@ async def _refresh_all_channels(
         category = ch.get("category") or "fun"
 
         # Only import for children who actually have this channel allowed
-        child_ids = store.get_child_ids_for_channel(ch_name)
+        child_ids = store.get_child_ids_for_channel(ch_id)
         if not child_ids:
             logger.debug("Channel %s: no children have it allowed — skipping", ch_name)
             continue
@@ -89,7 +89,7 @@ async def _refresh_all_channels(
             imported = store.bulk_import_channel_videos(
                 videos, category, child_ids
             )
-            store.update_all_channels_refreshed_at(ch_name)
+            store.update_all_channels_refreshed_at(ch_id)
 
             if imported > 0:
                 total_imported += imported

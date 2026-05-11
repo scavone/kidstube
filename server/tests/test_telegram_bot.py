@@ -684,19 +684,22 @@ class TestChannelCommand:
     @pytest.mark.asyncio
     async def test_channel_list_renders_delete_buttons(self, bot, admin_update, context, store):
         child = store.add_child("Alex")
-        store.add_channel(child["id"], "Allowed1", "allowed")
-        store.add_channel(child["id"], "Blocked1", "blocked")
+        store.add_channel(
+            child["id"], "Allowed1", "allowed", channel_id="UCallowed1______________"
+        )
+        store.add_channel(
+            child["id"], "Blocked1", "blocked", channel_id="UCblocked1______________"
+        )
         context.args = []
         await bot._cmd_channel(admin_update, context)
-        # Check that reply_markup has delete buttons
         call_kwargs = admin_update.effective_message.reply_text.call_args[1]
         keyboard = call_kwargs["reply_markup"]
-        # Flatten all button callback_data values
+        # Buttons embed the channel_id so collisions on display name don't break
+        # which channel gets removed.
         all_data = [btn.callback_data for row in keyboard.inline_keyboard for btn in row]
         assert any("chan_del:" in d for d in all_data)
-        # Each channel should have a delete button
-        assert any("Allowed1" in d for d in all_data)
-        assert any("Blocked1" in d for d in all_data)
+        assert any("UCallowed1______________" in d for d in all_data)
+        assert any("UCblocked1______________" in d for d in all_data)
 
 
 # ── Channel Delete Callback ──────────────────────────────────────
