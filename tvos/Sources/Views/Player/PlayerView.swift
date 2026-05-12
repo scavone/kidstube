@@ -428,8 +428,10 @@ final class PlayerViewModel: ObservableObject {
             object: item,
             queue: .main
         ) { [weak self] _ in
-            self?.pause()
-            onEnd()
+            MainActor.assumeIsolated {
+                self?.pause()
+                onEnd()
+            }
         }
     }
 
